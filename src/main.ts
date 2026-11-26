@@ -346,7 +346,7 @@ async function handleErrorReport(form: HTMLFormElement) {
   if (String(data.get('website') ?? '').trim()) return showToast('No se pudo procesar el reporte.');
   const submitReport = httpsCallable<
     { description: string; email: string; route: string },
-    { reportId: string; emailStatusToken: string }
+    { reportId: string; emailStatusToken?: string; emailSent?: boolean }
   >(functions, 'submitErrorReport');
   const updateEmailStatus = httpsCallable<
     { reportId: string; emailStatusToken: string; emailStatus: 'sent' | 'failed' },
@@ -359,30 +359,37 @@ async function handleErrorReport(form: HTMLFormElement) {
       email: String(data.get('email') ?? '').trim(),
       route: String(data.get('route') ?? ''),
     });
-    let emailSent = false;
-    let emailFailure = '';
-    try {
-      await sendVercelEmail('/api/send-error-report', {
-        reportId: result.data.reportId,
-        description,
-        email: String(data.get('email') ?? '').trim(),
-        route: String(data.get('route') ?? ''),
-        website: String(data.get('website') ?? ''),
-      });
-      emailSent = true;
-    } catch (error) {
-      emailFailure = errorText(error);
-    }
-
+    let emailSent = result.data.emailSent === true;
+    let emailFailure = result.data.emailSent === false
+      ? 'El servicio de correo informó que no se pudo enviar.'
+      : '';
     let statusFailure = '';
-    try {
-      await updateEmailStatus({
-        reportId: result.data.reportId,
-        emailStatusToken: result.data.emailStatusToken,
-        emailStatus: emailSent ? 'sent' : 'failed',
-      });
-    } catch (error) {
-      statusFailure = errorText(error);
+    if (result.data.emailStatusToken) {
+      emailSent = false;
+      try {
+        await sendVercelEmail('/api/send-error-report', {
+          reportId: result.data.reportId,
+          description,
+          email: String(data.get('email') ?? '').trim(),
+          route: String(data.get('route') ?? ''),
+          website: String(data.get('website') ?? ''),
+        });
+        emailSent = true;
+      } catch (error) {
+        emailFailure = errorText(error);
+      }
+
+      try {
+        await updateEmailStatus({
+          reportId: result.data.reportId,
+          emailStatusToken: result.data.emailStatusToken,
+          emailStatus: emailSent ? 'sent' : 'failed',
+        });
+      } catch (error) {
+        statusFailure = errorText(error);
+      }
+    } else if (typeof result.data.emailSent !== 'boolean') {
+      throw new Error('Firebase no devolvió el estado del reporte.');
     }
 
     let message = emailSent
