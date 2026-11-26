@@ -61,6 +61,7 @@ let activeView: AuthenticatedRoute = 'mine';
 let companyName = '';
 let ticketCategories = defaultTicketCategoryOptions();
 let ticketSettingsError = '';
+let expandedTicketCategoryIndex = -1;
 let loginCompanyId = '';
 let pendingLoginMessage = '';
 let search = '';
@@ -315,7 +316,7 @@ function renderApp() {
           </div>
           ${activeView === 'users' ? `<p class="notice">Empresa: <strong>${escapeHtml(companyName)}</strong> · Código ${escapeHtml(profile.companyId)}</p>` : ''}
           ${ticketSettingsError && activeView !== 'settings' ? `<div class="notice error" role="alert">No se pudo cargar la configuración de tickets: ${escapeHtml(ticketSettingsError)}</div>` : ''}
-          ${activeView === 'settings' ? renderTicketSettings(ticketCategories, ticketSettingsError)
+          ${activeView === 'settings' ? renderTicketSettings(ticketCategories, ticketSettingsError, expandedTicketCategoryIndex)
             : activeView === 'users' ? renderUsersTable(users, roleName) : activeView === 'reports'
             ? reportsLoadError
               ? `<div class="notice error" role="alert">${escapeHtml(reportsLoadError)}</div>`
@@ -379,19 +380,24 @@ async function renderTicketDetail(id: string) {
   const ticket = tickets.find((item) => item.id === id);
   if (!ticket) return;
   const dialog = root!.querySelector<HTMLDialogElement>('#modal')!;
-  dialog.innerHTML = '<div class="dialog-content"><p>Cargando actividad…</p></div>';
-  dialog.showModal();
+  dialog.classList.add('ticket-detail-modal');
+  dialog.onclose = () => dialog.classList.remove('ticket-detail-modal');
+  dialog.innerHTML = '<div class="ticket-detail-loading">Cargando conversación…</div>';
+  if (!dialog.open) dialog.showModal();
   const commentsSnapshot = await getDocs(query(collection(db, 'tickets', id, 'comments'), orderBy('createdAt', 'asc')));
   const comments = commentsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as TicketComment);
   dialog.innerHTML = renderTicketDetailDialog(ticket, comments, {
     isStaff: isStaff(),
     users,
+    currentUserId: currentUser?.uid ?? '',
     isLate,
     formatDate: (timestamp) => timestamp?.toDate().toLocaleString('es', {
       dateStyle: 'medium',
       timeStyle: 'short',
     }) ?? 'Ahora',
   });
+  const messages = dialog.querySelector<HTMLElement>('.ticket-chat-messages');
+  if (messages) messages.scrollTop = messages.scrollHeight;
 }
 
 function renderInvite() {
@@ -721,8 +727,13 @@ root.addEventListener('input', (event) => {
     if (count) count.textContent = `${visibleTickets().length} solicitudes`;
   }
   if (target instanceof HTMLInputElement && target.dataset.ticketCategoryName !== undefined) {
-    const category = ticketCategories[Number(target.dataset.ticketCategoryName)];
-    if (category) category.name = target.value;
+    const categoryIndex = Number(target.dataset.ticketCategoryName);
+    const category = ticketCategories[categoryIndex];
+    if (category) {
+      category.name = target.value;
+      const summaryName = target.closest('details')?.querySelector<HTMLElement>('[data-ticket-category-title]');
+      if (summaryName) summaryName.textContent = target.value.trim() || 'Nueva categoría';
+    }
   }
   if (target instanceof HTMLInputElement && target.dataset.ticketTypeName) {
     const [categoryIndex, typeIndex] = target.dataset.ticketTypeName.split(':').map(Number);
@@ -756,6 +767,12 @@ root.addEventListener('change', (event) => {
 root.addEventListener('click', async (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  const summary = target.closest<HTMLElement>('[data-ticket-category-summary]');
+  if (summary) {
+    const details = summary.closest<HTMLDetailsElement>('details[data-category-index]');
+    const index = Number(details?.dataset.categoryIndex);
+    if (Number.isInteger(index)) expandedTicketCategoryIndex = details?.open ? -1 : index;
+  }
   const button = target.closest<HTMLButtonElement>('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
@@ -783,17 +800,21 @@ root.addEventListener('click', async (event) => {
     await renderNewTicket();
   } else if (action === 'add-ticket-category') {
     ticketCategories.push({ name: '', types: [{ name: '', issues: [''] }] });
+    expandedTicketCategoryIndex = ticketCategories.length - 1;
     renderApp();
   } else if (action === 'remove-ticket-category') {
     const index = Number(button.dataset.categoryIndex);
     if (Number.isInteger(index) && index >= 0 && index < ticketCategories.length) {
       ticketCategories.splice(index, 1);
+      if (expandedTicketCategoryIndex === index) expandedTicketCategoryIndex = -1;
+      else if (expandedTicketCategoryIndex > index) expandedTicketCategoryIndex -= 1;
       renderApp();
     }
   } else if (action === 'add-ticket-type') {
     const index = Number(button.dataset.categoryIndex);
     if (Number.isInteger(index) && ticketCategories[index]) {
       ticketCategories[index].types.push({ name: '', issues: [''] });
+      expandedTicketCategoryIndex = index;
       renderApp();
     }
   } else if (action === 'remove-ticket-type') {
@@ -845,6 +866,7 @@ onAuthStateChanged(auth, async (user) => {
     companyName = '';
     ticketCategories = defaultTicketCategoryOptions();
     ticketSettingsError = '';
+    expandedTicketCategoryIndex = -1;
     if (pendingLoginMessage) {
       const message = pendingLoginMessage;
       pendingLoginMessage = '';

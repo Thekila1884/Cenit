@@ -10,22 +10,32 @@ function renderType(categoryIndex: number, typeIndex: number, type: TicketCatego
     </article>`;
 }
 
-export function renderTicketSettings(categories: TicketCategoryOption[], error = '') {
+export function renderTicketSettings(
+  categories: TicketCategoryOption[],
+  error = '',
+  expandedCategoryIndex = -1,
+) {
   return `
     <section class="settings-panel">
-      <div class="settings-intro"><div><h2>Clasificación de tickets</h2><p class="muted">Define las categorías, sus tipos y las fallas que podrán seleccionar al crear una solicitud.</p></div></div>
+      <div class="settings-intro"><div><h2>Clasificación de tickets</h2><p class="muted">Organiza las opciones del formulario. Abre una categoría para editar sus tipos y fallas.</p></div><span class="settings-count">${categories.length} categorías</span></div>
       ${error ? `<div class="notice error" role="alert">${escapeHtml(error)}</div>` : ''}
       <form id="ticket-settings-form" class="settings-form">
         <div class="ticket-category-editor">
           ${categories.map((category, categoryIndex) => `
-            <section class="ticket-category-card">
-              <div class="ticket-category-heading">
-                <label>Categoría<input name="category-${categoryIndex}-name" data-ticket-category-name="${categoryIndex}" maxlength="80" required value="${escapeHtml(category.name)}" placeholder="Ej. Periféricos"></label>
-                <button class="button secondary compact-button" type="button" data-action="remove-ticket-category" data-category-index="${categoryIndex}">Quitar categoría</button>
+            <details class="ticket-category-card" data-category-index="${categoryIndex}" ${expandedCategoryIndex === categoryIndex ? 'open' : ''}>
+              <summary class="ticket-category-summary" data-ticket-category-summary>
+                <span><strong data-ticket-category-title>${escapeHtml(category.name || 'Nueva categoría')}</strong><small>${category.types.length} ${category.types.length === 1 ? 'tipo' : 'tipos'}</small></span>
+                <span class="category-toggle" aria-hidden="true"></span>
+              </summary>
+              <div class="ticket-category-body">
+                <div class="ticket-category-heading">
+                  <label>Categoría<input name="category-${categoryIndex}-name" data-ticket-category-name="${categoryIndex}" maxlength="80" required value="${escapeHtml(category.name)}" placeholder="Ej. Periféricos"></label>
+                  <button class="button secondary compact-button" type="button" data-action="remove-ticket-category" data-category-index="${categoryIndex}">Quitar categoría</button>
+                </div>
+                <div class="ticket-type-list">${category.types.map((type, typeIndex) => renderType(categoryIndex, typeIndex, type)).join('')}</div>
+                <button class="button secondary compact-button" type="button" data-action="add-ticket-type" data-category-index="${categoryIndex}">＋ Agregar tipo</button>
               </div>
-              <div class="ticket-type-list">${category.types.map((type, typeIndex) => renderType(categoryIndex, typeIndex, type)).join('')}</div>
-              <button class="button secondary compact-button" type="button" data-action="add-ticket-type" data-category-index="${categoryIndex}">＋ Agregar tipo</button>
-            </section>`).join('')}
+            </details>`).join('')}
         </div>
         <div class="settings-actions">
           <button class="button secondary" type="button" data-action="add-ticket-category">＋ Agregar categoría</button>

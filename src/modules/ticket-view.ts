@@ -11,6 +11,7 @@ import {
 interface TicketDetailOptions {
   isStaff: boolean;
   users: UserProfile[];
+  currentUserId: string;
   isLate: (ticket: Ticket) => boolean;
   formatDate: (timestamp: Ticket['createdAt']) => string;
 }
@@ -58,20 +59,35 @@ export function renderTicketDetailDialog(
 ) {
   const assignee = options.users.find((user) => user.uid === ticket.assignedTo);
   return `
-    <div class="dialog-content">
-      <div class="dialog-heading"><div><p class="eyebrow">TK-${ticket.id.slice(0, 6).toUpperCase()} · ${escapeHtml([ticket.category, ticket.categoryType, ticket.issue].filter(Boolean).join(' · '))}</p><small class="muted">Asunto</small><h2>${escapeHtml(ticket.title)}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
-      <p class="detail-description">${escapeHtml(ticket.description || 'Sin descripción')}</p>
-      <div class="detail-grid">
-        <div><small>Solicitante</small><strong>${escapeHtml(ticket.createdByName)}</strong></div>
-        <div><small>Estado</small>${options.isStaff ? `<select data-ticket-field="status" data-id="${escapeHtml(ticket.id)}">${Object.entries(STATUS_LABELS).map(([key, label]) => `<option value="${key}" ${ticket.status === key ? 'selected' : ''}>${label}</option>`).join('')}</select>` : `<span class="badge status-${ticket.status}">${STATUS_LABELS[ticket.status]}</span>`}</div>
-        <div><small>Prioridad</small>${options.isStaff ? `<select data-ticket-field="priority" data-id="${escapeHtml(ticket.id)}">${Object.entries(PRIORITY_LABELS).map(([key, label]) => `<option value="${key}" ${ticket.priority === key ? 'selected' : ''}>${label}</option>`).join('')}</select>` : `<span class="badge priority-${ticket.priority}">${PRIORITY_LABELS[ticket.priority]}</span>`}</div>
-        <div><small>Asignado a</small>${options.isStaff ? `<select data-ticket-field="assignedTo" data-id="${escapeHtml(ticket.id)}"><option value="">Sin asignar</option>${options.users.filter((user) => user.active && user.role !== 'user').map((user) => `<option value="${escapeHtml(user.uid)}" ${ticket.assignedTo === user.uid ? 'selected' : ''}>${escapeHtml(user.name)}</option>`).join('')}</select>` : `<strong>${escapeHtml(assignee?.name ?? 'Sin asignar')}</strong>`}</div>
-        <div><small>Fecha límite</small><strong class="${options.isLate(ticket) ? 'late' : ''}">${escapeHtml(ticket.dueDate || '—')}</strong></div>
-        <div><small>Creado</small><strong>${options.formatDate(ticket.createdAt)}</strong></div>
-      </div>
-      <section class="activity"><h3>Actividad <span>${comments.length}</span></h3>
-        ${comments.length ? comments.map((comment) => `<article class="comment"><div><strong>${escapeHtml(comment.authorName)}</strong><time>${options.formatDate(comment.createdAt)}</time></div><p>${escapeHtml(comment.text)}</p></article>`).join('') : '<p class="muted">Aún no hay comentarios.</p>'}
+    <div class="ticket-detail-layout">
+      <section class="ticket-detail-main">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">TK-${ticket.id.slice(0, 6).toUpperCase()} · ${escapeHtml([ticket.category, ticket.categoryType, ticket.issue].filter(Boolean).join(' · '))}</p><small class="muted">Asunto</small><h2>${escapeHtml(ticket.title)}</h2></div>
+          <button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button>
+        </div>
+        <p class="detail-description">${escapeHtml(ticket.description || 'Sin descripción')}</p>
+        <div class="detail-grid">
+          <div><small>Solicitante</small><strong>${escapeHtml(ticket.createdByName)}</strong></div>
+          <div><small>Estado</small>${options.isStaff ? `<select data-ticket-field="status" data-id="${escapeHtml(ticket.id)}">${Object.entries(STATUS_LABELS).map(([key, label]) => `<option value="${key}" ${ticket.status === key ? 'selected' : ''}>${label}</option>`).join('')}</select>` : `<span class="badge status-${ticket.status}">${STATUS_LABELS[ticket.status]}</span>`}</div>
+          <div><small>Prioridad</small>${options.isStaff ? `<select data-ticket-field="priority" data-id="${escapeHtml(ticket.id)}">${Object.entries(PRIORITY_LABELS).map(([key, label]) => `<option value="${key}" ${ticket.priority === key ? 'selected' : ''}>${label}</option>`).join('')}</select>` : `<span class="badge priority-${ticket.priority}">${PRIORITY_LABELS[ticket.priority]}</span>`}</div>
+          <div><small>Asignado a</small>${options.isStaff ? `<select data-ticket-field="assignedTo" data-id="${escapeHtml(ticket.id)}"><option value="">Sin asignar</option>${options.users.filter((user) => user.active && user.role !== 'user').map((user) => `<option value="${escapeHtml(user.uid)}" ${ticket.assignedTo === user.uid ? 'selected' : ''}>${escapeHtml(user.name)}</option>`).join('')}</select>` : `<strong>${escapeHtml(assignee?.name ?? 'Sin asignar')}</strong>`}</div>
+          <div><small>Fecha límite</small><strong class="${options.isLate(ticket) ? 'late' : ''}">${escapeHtml(ticket.dueDate || '—')}</strong></div>
+          <div><small>Creado</small><strong>${options.formatDate(ticket.createdAt)}</strong></div>
+        </div>
       </section>
-      <form id="comment-form" class="comment-form" data-id="${escapeHtml(ticket.id)}"><textarea name="comment" rows="2" maxlength="4000" required placeholder="Escribe una actualización..."></textarea><button class="button primary" type="submit">Comentar</button></form>
+      <aside class="ticket-chat-panel" aria-label="Conversación del ticket">
+        <header class="ticket-chat-header"><div><h3>Conversación</h3><span>${comments.length} ${comments.length === 1 ? 'mensaje' : 'mensajes'}</span></div></header>
+        <div class="ticket-chat-messages" role="log" aria-live="polite">
+          ${comments.length ? comments.map((comment) => `
+            <article class="ticket-chat-message ${comment.authorId === options.currentUserId ? 'message-own' : 'message-other'}">
+              <div class="chat-message-meta"><strong>${escapeHtml(comment.authorName)}</strong><time>${options.formatDate(comment.createdAt)}</time></div>
+              <p>${escapeHtml(comment.text)}</p>
+            </article>`).join('') : '<p class="ticket-chat-empty">Aún no hay mensajes. Inicia la conversación.</p>'}
+        </div>
+        <form id="comment-form" class="ticket-chat-composer" data-id="${escapeHtml(ticket.id)}">
+          <textarea name="comment" rows="2" maxlength="4000" required aria-label="Mensaje" placeholder="Escribe un mensaje…"></textarea>
+          <button class="button primary" type="submit" aria-label="Enviar mensaje">Enviar</button>
+        </form>
+      </aside>
     </div>`;
 }
