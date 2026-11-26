@@ -1,9 +1,9 @@
 import { escapeHtml } from './escape-html';
 import {
-  CATEGORIES,
   PRIORITY_LABELS,
   STATUS_LABELS,
   type Ticket,
+  type TicketCategoryOption,
   type TicketComment,
   type UserProfile,
 } from '../types';
@@ -20,21 +20,30 @@ export function renderTicketRows(items: Ticket[], isLate: (ticket: Ticket) => bo
   return `<div class="ticket-list">${items.map((ticket) => `
     <button class="ticket-row" type="button" data-action="detail" data-id="${escapeHtml(ticket.id)}">
       <span class="ticket-id">TK-${ticket.id.slice(0, 6).toUpperCase()}</span>
-      <span class="ticket-main"><strong>${escapeHtml(ticket.title)}</strong><small>${escapeHtml(ticket.category)} · ${escapeHtml(ticket.createdByName)}</small></span>
+      <span class="ticket-main"><strong>${escapeHtml(ticket.title)}</strong><small>${escapeHtml([
+        ticket.category,
+        ticket.categoryType,
+        ticket.issue,
+        ticket.createdByName,
+      ].filter(Boolean).join(' · '))}</small></span>
       <span class="badge status-${ticket.status}">${STATUS_LABELS[ticket.status]}</span>
       <span class="badge priority-${ticket.priority}">${PRIORITY_LABELS[ticket.priority]}</span>
       <span class="due ${isLate(ticket) ? 'late' : ''}">${escapeHtml(ticket.dueDate)}${isLate(ticket) ? ' · vencido' : ''}</span>
     </button>`).join('')}</div>`;
 }
 
-export function renderNewTicketDialog(today: string) {
+export function renderNewTicketDialog(today: string, categories: TicketCategoryOption[]) {
+  const firstCategory = categories[0];
+  const firstType = firstCategory?.types[0];
   return `
     <form id="ticket-form" class="dialog-content">
       <div class="dialog-heading"><div><p class="eyebrow">NUEVA SOLICITUD</p><h2>Cuéntanos qué necesitas</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
-      <label>Título<input name="title" maxlength="120" required placeholder="Resume el problema o solicitud"></label>
+      <label>Asunto<input name="title" maxlength="120" required placeholder="Resume el problema o solicitud"></label>
       <label>Descripción<textarea name="description" rows="4" maxlength="4000" placeholder="Agrega los detalles que nos ayudarán a atenderte"></textarea></label>
       <div class="form-grid">
-        <label>Categoría<select name="category">${CATEGORIES.map((category) => `<option>${escapeHtml(category)}</option>`).join('')}</select></label>
+        <label>Categoría<select name="category" data-ticket-category>${categories.map((category) => `<option value="${escapeHtml(category.name)}">${escapeHtml(category.name)}</option>`).join('')}</select></label>
+        <label>Tipo<select name="categoryType" data-ticket-type>${(firstCategory?.types ?? []).map((type) => `<option value="${escapeHtml(type.name)}">${escapeHtml(type.name)}</option>`).join('')}</select></label>
+        <label>Falla<select name="issue" data-ticket-issue>${(firstType?.issues ?? []).map((issue) => `<option value="${escapeHtml(issue)}">${escapeHtml(issue)}</option>`).join('')}</select></label>
         <label>Prioridad<select name="priority">${Object.entries(PRIORITY_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'media' ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label>Fecha deseada<input name="dueDate" type="date" min="${today}" value="${today}"></label>
       </div>
@@ -50,7 +59,7 @@ export function renderTicketDetailDialog(
   const assignee = options.users.find((user) => user.uid === ticket.assignedTo);
   return `
     <div class="dialog-content">
-      <div class="dialog-heading"><div><p class="eyebrow">TK-${ticket.id.slice(0, 6).toUpperCase()} · ${escapeHtml(ticket.category)}</p><h2>${escapeHtml(ticket.title)}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
+      <div class="dialog-heading"><div><p class="eyebrow">TK-${ticket.id.slice(0, 6).toUpperCase()} · ${escapeHtml([ticket.category, ticket.categoryType, ticket.issue].filter(Boolean).join(' · '))}</p><small class="muted">Asunto</small><h2>${escapeHtml(ticket.title)}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
       <p class="detail-description">${escapeHtml(ticket.description || 'Sin descripción')}</p>
       <div class="detail-grid">
         <div><small>Solicitante</small><strong>${escapeHtml(ticket.createdByName)}</strong></div>

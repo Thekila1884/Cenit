@@ -9,6 +9,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from 'firebase/firestore';
@@ -19,15 +20,22 @@ import { renderHomeView } from './modules/home-view';
 import { renderErrorReportDialog, renderReports } from './modules/reports-view';
 import { routeFromHash, routeHref, type AuthenticatedRoute } from './modules/router';
 import { isSalesPlanId, renderSalesContactDialog, type SalesPlanId } from './modules/sales-view';
+import { renderTicketSettings } from './modules/settings-view';
 import { renderNewTicketDialog, renderTicketDetailDialog, renderTicketRows } from './modules/ticket-view';
+import {
+  parseTicketCategoryMap,
+  ticketCategoriesFromForm,
+  ticketCategoriesToMap,
+} from './modules/ticket-settings';
 import { renderInviteDialog, renderInviteLink as renderInviteLinkView, renderUsersTable } from './modules/users-view';
 import {
-  CATEGORIES,
+  DEFAULT_TICKET_CATEGORIES,
   STATUS_LABELS,
   type Priority,
   type Role,
   type ErrorReport,
   type Ticket,
+  type TicketCategoryOption,
   type TicketComment,
   type TicketStatus,
   type UserProfile,
@@ -35,6 +43,13 @@ import {
 
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) throw new Error('No se encontró el contenedor principal.');
+
+function defaultTicketCategoryOptions(): TicketCategoryOption[] {
+  return DEFAULT_TICKET_CATEGORIES.map((category) => ({
+    ...category,
+    types: category.types.map((type) => ({ ...type, issues: [...type.issues] })),
+  }));
+}
 
 let currentUser: User | null = null;
 let profile: UserProfile | null = null;
@@ -44,6 +59,8 @@ let reports: ErrorReport[] = [];
 let reportsLoadError = '';
 let activeView: AuthenticatedRoute = 'mine';
 let companyName = '';
+let ticketCategories = defaultTicketCategoryOptions();
+let ticketSettingsError = '';
 let loginCompanyId = '';
 let pendingLoginMessage = '';
 let search = '';
@@ -162,6 +179,20 @@ async function loadCompany() {
   companyName = name;
 }
 
+async function loadTicketSettings() {
+  if (!profile) return;
+  try {
+    const snapshot = await getDoc(doc(db, 'companySettings', profile.companyId));
+    ticketCategories = snapshot.exists()
+      ? parseTicketCategoryMap(snapshot.get('ticketCategories'))
+      : defaultTicketCategoryOptions();
+    ticketSettingsError = '';
+  } catch (error) {
+    ticketSettingsError = errorText(error);
+    ticketCategories = [];
+  }
+}
+
 async function loadTickets() {
   if (!currentUser || !profile) return;
   const source = collection(db, 'tickets');
@@ -217,7 +248,15 @@ function visibleTickets() {
     ? tickets.filter((ticket) => ticket.createdBy === currentUser?.uid || ticket.assignedTo === currentUser?.uid)
     : tickets;
   return scopedTickets.filter((ticket) => {
-    const matchesSearch = !search || [ticket.title, ticket.id, ticket.description, ticket.createdByName]
+    const matchesSearch = !search || [
+      ticket.title,
+      ticket.id,
+      ticket.description,
+      ticket.category,
+      ticket.categoryType ?? '',
+      ticket.issue ?? '',
+      ticket.createdByName,
+    ]
       .some((value) => value.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
     return matchesSearch && (!statusFilter || ticket.status === statusFilter);
   });
@@ -228,14 +267,23 @@ function renderApp() {
   if (!profile || !signedInUser) return;
   if (activeView === 'users' && !isAdmin()) activeView = 'mine';
   if (activeView === 'tickets' && !isStaff()) activeView = 'mine';
+  if (activeView === 'settings' && !isAdmin()) activeView = 'mine';
 
   const openCount = tickets.filter((ticket) => ticket.status !== 'resuelto').length;
   const myOpenCount = tickets.filter((ticket) => ticket.status !== 'resuelto'
     && (ticket.createdBy === signedInUser.uid || ticket.assignedTo === signedInUser.uid)).length;
-  const viewTitle = activeView === 'users' ? 'Usuarios' : activeView === 'tickets' ? 'Tickets del equipo' : 'Mis tickets';
+  const viewTitle = activeView === 'settings'
+    ? 'Configuración'
+    : activeView === 'users'
+      ? 'Usuarios'
+      : activeView === 'tickets'
+        ? 'Tickets del equipo'
+        : 'Mis tickets';
   const pageTitle = activeView === 'reports' ? 'Reportes de error' : viewTitle;
   const pageDescription = activeView === 'reports'
     ? 'Revisa los errores reportados por el equipo.'
+    : activeView === 'settings'
+      ? 'Administra la clasificación que se usa al crear tickets en tu empresa.'
     : activeView === 'users'
       ? 'Invita personas y revisa sus roles dentro de tu empresa.'
       : activeView === 'tickets'
@@ -252,6 +300,7 @@ function renderApp() {
           ${isStaff() ? `<a class="nav-item ${activeView === 'tickets' ? 'selected' : ''}" href="${routeHref('tickets')}"><span>▣</span>Todos los tickets${openCount ? `<span class="nav-count">${openCount}</span>` : ''}</a>` : ''}
           ${isAdmin() ? `<a class="nav-item ${activeView === 'users' ? 'selected' : ''}" href="${routeHref('users')}"><span>♙</span>Usuarios</a>` : ''}
           ${isAdmin() ? `<a class="nav-item ${activeView === 'reports' ? 'selected' : ''}" href="${routeHref('reports')}"><span>⚑</span>Reportes</a>` : ''}
+          ${isAdmin() ? `<a class="nav-item ${activeView === 'settings' ? 'selected' : ''}" href="${routeHref('settings')}"><span>⚙</span>Configuración</a>` : ''}
         </nav>
         <div class="sidebar-bottom">
           <div class="user-summary"><span class="avatar">${escapeHtml(profile.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span><span class="user-meta"><strong>${escapeHtml(profile.name)}</strong><small>${roleName(profile.role)}</small></span></div>
@@ -262,10 +311,12 @@ function renderApp() {
         <header class="topbar"><span class="breadcrumbs">Cenit <span>/</span> ${pageTitle}</span><div class="topbar-actions"><button class="button secondary" type="button" data-action="report-error">Reportar error</button><span class="online"><i></i> Conectado</span></div></header>
         <section class="page-content">
           <div class="page-heading"><div><p class="eyebrow">GESTIÓN DE SOPORTE</p><h1>${pageTitle}</h1><p class="muted">${pageDescription}</p></div>
-            ${activeView === 'users' ? '<button class="button primary" data-action="invite"><span>＋</span> Invitar usuario</button>' : activeView === 'reports' ? '' : '<button class="button primary" data-action="new-ticket"><span>＋</span> Nueva solicitud</button>'}
+            ${activeView === 'users' ? '<button class="button primary" data-action="invite"><span>＋</span> Invitar usuario</button>' : activeView === 'reports' || activeView === 'settings' ? '' : '<button class="button primary" data-action="new-ticket"><span>＋</span> Nueva solicitud</button>'}
           </div>
           ${activeView === 'users' ? `<p class="notice">Empresa: <strong>${escapeHtml(companyName)}</strong> · Código ${escapeHtml(profile.companyId)}</p>` : ''}
-          ${activeView === 'users' ? renderUsersTable(users, roleName) : activeView === 'reports'
+          ${ticketSettingsError && activeView !== 'settings' ? `<div class="notice error" role="alert">No se pudo cargar la configuración de tickets: ${escapeHtml(ticketSettingsError)}</div>` : ''}
+          ${activeView === 'settings' ? renderTicketSettings(ticketCategories, ticketSettingsError)
+            : activeView === 'users' ? renderUsersTable(users, roleName) : activeView === 'reports'
             ? reportsLoadError
               ? `<div class="notice error" role="alert">${escapeHtml(reportsLoadError)}</div>`
               : renderReports(reports, (report) => report.createdAt?.toDate().toLocaleString('es', {
@@ -293,7 +344,8 @@ async function renderCurrentRoute() {
   let nextRoute: AuthenticatedRoute = requestedRoute === 'home' || requestedRoute === 'login'
     ? 'mine'
     : requestedRoute;
-  if (((nextRoute === 'users' || nextRoute === 'reports') && !isAdmin()) || (nextRoute === 'tickets' && !isStaff())) {
+  if (((nextRoute === 'users' || nextRoute === 'reports' || nextRoute === 'settings') && !isAdmin())
+    || (nextRoute === 'tickets' && !isStaff())) {
     nextRoute = 'mine';
   }
   activeView = nextRoute;
@@ -312,9 +364,14 @@ async function renderCurrentRoute() {
   if (window.location.hash !== expectedHash) window.location.hash = expectedHash;
 }
 
-function renderNewTicket() {
+async function renderNewTicket() {
+  await loadTicketSettings();
+  if (ticketSettingsError || !ticketCategories.length) {
+    showToast('No se pudo cargar la configuración de categorías. Contacta al administrador.');
+    return;
+  }
   const dialog = root!.querySelector<HTMLDialogElement>('#modal')!;
-  dialog.innerHTML = renderNewTicketDialog(today());
+  dialog.innerHTML = renderNewTicketDialog(today(), ticketCategories);
   dialog.showModal();
 }
 
@@ -361,6 +418,27 @@ function renderSalesContact(plan: SalesPlanId) {
   if (!dialog) return;
   dialog.innerHTML = renderSalesContactDialog(plan);
   dialog.showModal();
+}
+
+function updateTicketTypeOptions(categorySelect: HTMLSelectElement) {
+  const form = categorySelect.form;
+  const typeSelect = form?.querySelector<HTMLSelectElement>('[data-ticket-type]');
+  const issueSelect = form?.querySelector<HTMLSelectElement>('[data-ticket-issue]');
+  if (!form || !typeSelect || !issueSelect) return;
+  const category = ticketCategories.find((item) => item.name === categorySelect.value);
+  const types = category?.types ?? [];
+  typeSelect.innerHTML = types.map((type) => `<option value="${escapeHtml(type.name)}">${escapeHtml(type.name)}</option>`).join('');
+  updateTicketIssueOptions(typeSelect);
+}
+
+function updateTicketIssueOptions(typeSelect: HTMLSelectElement) {
+  const form = typeSelect.form;
+  const categorySelect = form?.querySelector<HTMLSelectElement>('[data-ticket-category]');
+  const issueSelect = form?.querySelector<HTMLSelectElement>('[data-ticket-issue]');
+  if (!form || !categorySelect || !issueSelect) return;
+  const category = ticketCategories.find((item) => item.name === categorySelect.value);
+  const type = category?.types.find((item) => item.name === typeSelect.value);
+  issueSelect.innerHTML = (type?.issues ?? []).map((issue) => `<option value="${escapeHtml(issue)}">${escapeHtml(issue)}</option>`).join('');
 }
 
 function renderInviteLink(email: string, link: string) {
@@ -457,17 +535,28 @@ async function handleSalesContact(form: HTMLFormElement) {
 }
 
 async function handleTicketCreate(form: HTMLFormElement) {
-  if (!currentUser || !profile) return;
+  if (!currentUser || !profile || ticketSettingsError) return;
   const data = new FormData(form);
   const title = String(data.get('title') ?? '').trim();
   if (!title) return;
+  const category = String(data.get('category') ?? '');
+  const categoryType = String(data.get('categoryType') ?? '');
+  const issue = String(data.get('issue') ?? '');
+  const configuredType = ticketCategories.find((item) => item.name === category)
+    ?.types.find((item) => item.name === categoryType);
+  if (!configuredType?.issues.includes(issue)) {
+    showToast('Selecciona una categoría, tipo y falla válidos.');
+    return;
+  }
   setBusy(true);
   try {
     await addDoc(collection(db, 'tickets'), {
       companyId: profile.companyId,
       title,
       description: String(data.get('description') ?? '').trim(),
-      category: String(data.get('category') ?? CATEGORIES[0]),
+      category,
+      categoryType,
+      issue,
       priority: String(data.get('priority') ?? 'media') as Priority,
       status: 'abierto',
       createdBy: currentUser.uid,
@@ -482,6 +571,33 @@ async function handleTicketCreate(form: HTMLFormElement) {
     await loadTickets();
     renderApp();
     showToast('Solicitud creada.');
+  } catch (error) {
+    showToast(errorText(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleTicketSettingsSave(form: HTMLFormElement) {
+  if (!profile || !isAdmin()) return;
+  let categories: TicketCategoryOption[];
+  try {
+    categories = ticketCategoriesFromForm(form, ticketCategories);
+  } catch (error) {
+    showToast(errorText(error));
+    return;
+  }
+  setBusy(true);
+  try {
+    await setDoc(doc(db, 'companySettings', profile.companyId), {
+      companyId: profile.companyId,
+      ticketCategories: ticketCategoriesToMap(categories),
+      updatedAt: serverTimestamp(),
+    });
+    ticketCategories = categories;
+    ticketSettingsError = '';
+    renderApp();
+    showToast('Configuración de tickets guardada.');
   } catch (error) {
     showToast(errorText(error));
   } finally {
@@ -590,6 +706,7 @@ root.addEventListener('submit', (event) => {
   if (form.id === 'error-report-form') void handleErrorReport(form);
   if (form.id === 'sales-contact-form') void handleSalesContact(form);
   if (form.id === 'ticket-form') void handleTicketCreate(form);
+  if (form.id === 'ticket-settings-form') void handleTicketSettingsSave(form);
   if (form.id === 'invite-form') void handleInvite(form);
   if (form.id === 'comment-form') void handleComment(form);
 });
@@ -603,6 +720,22 @@ root.addEventListener('input', (event) => {
     const count = root!.querySelector('.result-count');
     if (count) count.textContent = `${visibleTickets().length} solicitudes`;
   }
+  if (target instanceof HTMLInputElement && target.dataset.ticketCategoryName !== undefined) {
+    const category = ticketCategories[Number(target.dataset.ticketCategoryName)];
+    if (category) category.name = target.value;
+  }
+  if (target instanceof HTMLInputElement && target.dataset.ticketTypeName) {
+    const [categoryIndex, typeIndex] = target.dataset.ticketTypeName.split(':').map(Number);
+    const type = ticketCategories[categoryIndex]?.types[typeIndex];
+    if (type) type.name = target.value;
+  }
+  if (target instanceof HTMLTextAreaElement && target.dataset.ticketIssues) {
+    const [categoryIndex, typeIndex] = target.dataset.ticketIssues.split(':').map(Number);
+    const type = ticketCategories[categoryIndex]?.types[typeIndex];
+    if (type) {
+      type.issues = target.value.split(/\r?\n/).map((issue) => issue.trim()).filter(Boolean);
+    }
+  }
 });
 
 root.addEventListener('change', (event) => {
@@ -615,6 +748,8 @@ root.addEventListener('change', (event) => {
     const count = root!.querySelector('.result-count');
     if (count) count.textContent = `${visibleTickets().length} solicitudes`;
   }
+  if (target.matches('[data-ticket-category]')) updateTicketTypeOptions(target);
+  if (target.matches('[data-ticket-type]')) updateTicketIssueOptions(target);
   if (target.dataset.ticketField) void updateTicketField(target);
 });
 
@@ -645,7 +780,30 @@ root.addEventListener('click', async (event) => {
   } else if (action === 'signout') {
     await signOut(auth);
   } else if (action === 'new-ticket') {
-    renderNewTicket();
+    await renderNewTicket();
+  } else if (action === 'add-ticket-category') {
+    ticketCategories.push({ name: '', types: [{ name: '', issues: [''] }] });
+    renderApp();
+  } else if (action === 'remove-ticket-category') {
+    const index = Number(button.dataset.categoryIndex);
+    if (Number.isInteger(index) && index >= 0 && index < ticketCategories.length) {
+      ticketCategories.splice(index, 1);
+      renderApp();
+    }
+  } else if (action === 'add-ticket-type') {
+    const index = Number(button.dataset.categoryIndex);
+    if (Number.isInteger(index) && ticketCategories[index]) {
+      ticketCategories[index].types.push({ name: '', issues: [''] });
+      renderApp();
+    }
+  } else if (action === 'remove-ticket-type') {
+    const categoryIndex = Number(button.dataset.categoryIndex);
+    const typeIndex = Number(button.dataset.typeIndex);
+    if (Number.isInteger(categoryIndex) && Number.isInteger(typeIndex)
+      && ticketCategories[categoryIndex]?.types[typeIndex]) {
+      ticketCategories[categoryIndex].types.splice(typeIndex, 1);
+      renderApp();
+    }
   } else if (action === 'invite') {
     renderInvite();
   } else if (action === 'detail' && button.dataset.id) {
@@ -685,6 +843,8 @@ onAuthStateChanged(auth, async (user) => {
     reports = [];
     reportsLoadError = '';
     companyName = '';
+    ticketCategories = defaultTicketCategoryOptions();
+    ticketSettingsError = '';
     if (pendingLoginMessage) {
       const message = pendingLoginMessage;
       pendingLoginMessage = '';
@@ -706,6 +866,7 @@ onAuthStateChanged(auth, async (user) => {
     }
     loginCompanyId = '';
     await loadCompany();
+    await loadTicketSettings();
     await loadTickets();
     if (isStaff()) await loadUsers();
     await renderCurrentRoute();

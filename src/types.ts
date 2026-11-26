@@ -20,6 +20,8 @@ export interface Ticket {
   title: string;
   description: string;
   category: string;
+  categoryType?: string;
+  issue?: string;
   priority: Priority;
   status: TicketStatus;
   createdBy: string;
@@ -30,6 +32,18 @@ export interface Ticket {
   updatedAt: Timestamp | null;
   closedAt: Timestamp | null;
 }
+
+export interface TicketTypeOption {
+  name: string;
+  issues: string[];
+}
+
+export interface TicketCategoryOption {
+  name: string;
+  types: TicketTypeOption[];
+}
+
+export type TicketCategoryMap = Record<string, Record<string, string[]>>;
 
 export interface TicketComment {
   id: string;
@@ -65,11 +79,19 @@ export const PRIORITY_LABELS: Record<Priority, string> = {
   critica: 'Crítica',
 };
 
-export const CATEGORIES = [
-  'Soporte TI',
-  'Infraestructura',
-  'Recursos humanos',
-  'Finanzas',
-  'Mantenimiento',
-  'Otro',
+export const DEFAULT_TICKET_CATEGORIES: TicketCategoryOption[] = [
+  {
+    name: 'Periféricos',
+    types: [
+      { name: 'Mouse', issues: ['Dañado', 'Sin batería', 'No funciona'] },
+      { name: 'Teclado', issues: ['Dañado', 'No funciona', 'Teclas no responden'] },
+      { name: 'Monitor', issues: ['Dañado', 'Sin señal', 'No enciende'] },
+    ],
+  },
+  { name: 'Soporte TI', types: [{ name: 'General', issues: ['No funciona', 'Error', 'Otro'] }] },
+  { name: 'Infraestructura', types: [{ name: 'General', issues: ['Sin conexión', 'Intermitente', 'Otro'] }] },
+  { name: 'Recursos humanos', types: [{ name: 'General', issues: ['Consulta', 'Actualización', 'Otro'] }] },
+  { name: 'Finanzas', types: [{ name: 'General', issues: ['Consulta', 'Otro'] }] },
+  { name: 'Mantenimiento', types: [{ name: 'General', issues: ['Dañado', 'No funciona', 'Otro'] }] },
+  { name: 'Otro', types: [{ name: 'General', issues: ['Otro'] }] },
 ];

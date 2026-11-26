@@ -13,7 +13,11 @@ Base de la aplicación multiusuario de Cenit. La maqueta anterior se conserva en
 
 Los roles son `user` (solicitante), `agent` y `admin`. No hay registro público. La empresa se asigna al perfil y a los custom claims; el ID escrito en el login debe coincidir con esa asignación.
 
-La navegación usa rutas con enlaces directos: `#/tickets/mine`, `#/tickets/all`, `#/admin/users` y `#/admin/reports`. Las vistas de acceso, tickets, usuarios, reportes y rutas están separadas en `src/modules/`.
+La navegación usa rutas con enlaces directos: `#/tickets/mine`, `#/tickets/all`, `#/admin/users`, `#/admin/reports` y `#/admin/settings`. Las vistas de acceso, tickets, usuarios, reportes, configuración y rutas están separadas en `src/modules/`.
+
+## Configuración de tickets
+
+Los administradores pueden configurar desde **Configuración** las categorías, tipos y fallas disponibles en el formulario de tickets. Las opciones se guardan por empresa en `companySettings/{companyId}`; por ejemplo, `Periféricos → Mouse → Dañado / Sin batería / No funciona`. Los demás usuarios de la misma empresa pueden seleccionar esas opciones al crear tickets. El campo visible **Asunto** conserva el nombre interno `title` para no afectar los tickets existentes.
 
 ## Desarrollo local
 
@@ -89,6 +93,7 @@ En Vercel, configura las variables de Resend y Firebase Admin indicadas arriba y
 - `companies/{companyId}`: empresa; lectura limitada a usuarios activos de ese tenant.
 - `users/{uid}`: perfil de usuario con `companyId`. La escritura desde el cliente está bloqueada.
 - `tickets/{ticketId}`: solicitud y estado operativo, siempre asociada a un `companyId`.
+- `companySettings/{companyId}`: categorías de tickets de la empresa; lectura para miembros activos y escritura exclusiva de administradores del mismo tenant.
 - `tickets/{ticketId}/comments/{commentId}`: actividad escrita como comentarios inmutables.
 - `errorReports/{reportId}`: reportes enviados al soporte, con lectura y revisión limitadas a administradores de la empresa asociada.
 

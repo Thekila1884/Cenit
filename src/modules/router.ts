@@ -1,4 +1,4 @@
-export type AuthenticatedRoute = 'mine' | 'tickets' | 'users' | 'reports';
+export type AuthenticatedRoute = 'mine' | 'tickets' | 'users' | 'reports' | 'settings';
 export type AppRoute = AuthenticatedRoute | 'home' | 'login';
 
 const routePaths: Record<AppRoute, string> = {
@@ -8,6 +8,7 @@ const routePaths: Record<AppRoute, string> = {
   tickets: '/tickets/all',
   users: '/admin/users',
   reports: '/admin/reports',
+  settings: '/admin/settings',
 };
 
 export function routeHref(route: AppRoute) {

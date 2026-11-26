@@ -40,10 +40,63 @@ service cloud.firestore {
       return staff() && tenantMember(companyId);
     }
 
+    function defaultTicketCategories() {
+      return {
+        'Periféricos': {
+          'Mouse': ['Dañado', 'Sin batería', 'No funciona'],
+          'Teclado': ['Dañado', 'No funciona', 'Teclas no responden'],
+          'Monitor': ['Dañado', 'Sin señal', 'No enciende']
+        },
+        'Soporte TI': {'General': ['No funciona', 'Error', 'Otro']},
+        'Infraestructura': {'General': ['Sin conexión', 'Intermitente', 'Otro']},
+        'Recursos humanos': {'General': ['Consulta', 'Actualización', 'Otro']},
+        'Finanzas': {'General': ['Consulta', 'Otro']},
+        'Mantenimiento': {'General': ['Dañado', 'No funciona', 'Otro']},
+        'Otro': {'General': ['Otro']}
+      };
+    }
+
+    function configuredTicketCategories(companyId) {
+      let settingsPath = /databases/$(database)/documents/companySettings/$(companyId);
+      return exists(settingsPath)
+        ? get(settingsPath).data.ticketCategories
+        : defaultTicketCategories();
+    }
+
+    function validConfiguredTicketClassification() {
+      let categories = configuredTicketCategories(request.auth.token.companyId);
+      let category = request.resource.data.category;
+      let categoryType = request.resource.data.categoryType;
+      let issue = request.resource.data.issue;
+      return categories is map
+        && categories.keys().hasAny([category])
+        && categories[category] is map
+        && categories[category].keys().hasAny([categoryType])
+        && categories[category][categoryType] is list
+        && categories[category][categoryType].hasAny([issue]);
+    }
+
+    function validTicketClassification() {
+      return request.resource.data.keys().hasAll(['categoryType', 'issue'])
+        ? request.resource.data.categoryType is string
+          && request.resource.data.categoryType.size() > 0
+          && request.resource.data.categoryType.size() <= 80
+          && request.resource.data.issue is string
+          && request.resource.data.issue.size() > 0
+          && request.resource.data.issue.size() <= 80
+          && validConfiguredTicketClassification()
+        : !exists(/databases/$(database)/documents/companySettings/$(request.auth.token.companyId))
+          && !request.resource.data.keys().hasAny(['categoryType', 'issue'])
+          && request.resource.data.category in [
+            'Soporte TI', 'Infraestructura', 'Recursos humanos', 'Finanzas',
+            'Mantenimiento', 'Otro'
+          ];
+    }
+
     function validTicket() {
       return request.resource.data.keys().hasOnly([
-          'companyId', 'title', 'description', 'category', 'priority', 'status',
-          'createdBy', 'createdByName', 'assignedTo', 'createdAt',
+          'companyId', 'title', 'description', 'category', 'categoryType', 'issue',
+          'priority', 'status', 'createdBy', 'createdByName', 'assignedTo', 'createdAt',
           'dueDate', 'updatedAt', 'closedAt'
         ])
         && request.resource.data.companyId == request.auth.token.companyId
@@ -52,6 +105,10 @@ service cloud.firestore {
         && request.resource.data.title.size() <= 120
         && request.resource.data.description is string
         && request.resource.data.description.size() <= 4000
+        && request.resource.data.category is string
+        && request.resource.data.category.size() > 0
+        && request.resource.data.category.size() <= 80
+        && validTicketClassification()
         && request.resource.data.createdBy == request.auth.uid
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId
           == request.auth.token.companyId
@@ -61,10 +118,6 @@ service cloud.firestore {
         && request.resource.data.closedAt == null
         && request.resource.data.dueDate is string
         && request.resource.data.dueDate.size() == 10
-        && request.resource.data.category in [
-          'Soporte TI', 'Infraestructura', 'Recursos humanos', 'Finanzas',
-          'Mantenimiento', 'Otro'
-        ]
         && request.resource.data.status == 'abierto'
         && request.resource.data.priority in ['baja', 'media', 'alta', 'critica']
         && request.resource.data.createdAt == request.time
@@ -83,6 +136,20 @@ service cloud.firestore {
     match /companies/{companyId} {
       allow get: if tenantMember(companyId);
       allow list, create, update, delete: if false;
+    }
+
+    match /companySettings/{companyId} {
+      allow get: if tenantMember(companyId);
+      allow list: if false;
+      allow create, update: if administrator()
+        && request.auth.token.companyId == companyId
+        && request.resource.data.keys().hasOnly(['companyId', 'ticketCategories', 'updatedAt'])
+        && request.resource.data.companyId == companyId
+        && request.resource.data.ticketCategories is map
+        && request.resource.data.ticketCategories.keys().size() > 0
+        && request.resource.data.ticketCategories.keys().size() <= 30
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
 
     match /users/{userId} {
