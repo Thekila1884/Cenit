@@ -31,7 +31,7 @@ export default async function handler(request, response) {
   const requestId = typeof request.headers['x-vercel-id'] === 'string'
     ? request.headers['x-vercel-id']
     : 'unavailable';
-  const logProgress = (event) => console.info('Vercel invite-user progress', { requestId, event });
+  const logProgress = (event) => console.log('Vercel invite-user progress', { requestId, event });
   logProgress('request-accepted');
 
   let failureStage = 'firebase-admin';
