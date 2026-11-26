@@ -1,0 +1,25 @@
+{
+  "name": "cenit-helpdesk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "set-admin": "node --env-file=.env functions/scripts/set-admin.mjs",
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "firebase": "^11.10.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.7"
+  }
+}

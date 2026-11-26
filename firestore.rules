@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeUser() {
+      return signedIn()
+        && request.auth.token.active == true
+        && request.auth.token.role in ['admin', 'agent', 'user'];
+    }
+
+    function staff() {
+      return activeUser() && request.auth.token.role in ['admin', 'agent'];
+    }
+
+    function administrator() {
+      return activeUser() && request.auth.token.role == 'admin';
+    }
+
+    function validTicket() {
+      return request.resource.data.keys().hasOnly([
+          'title', 'description', 'category', 'priority', 'status',
+          'createdBy', 'createdByName', 'assignedTo', 'createdAt',
+          'dueDate', 'updatedAt', 'closedAt'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 4000
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdByName
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
+        && request.resource.data.assignedTo == null
+        && request.resource.data.closedAt == null
+        && request.resource.data.dueDate is string
+        && request.resource.data.dueDate.size() == 10
+        && request.resource.data.category in [
+          'Soporte TI', 'Infraestructura', 'Recursos humanos', 'Finanzas',
+          'Mantenimiento', 'Otro'
+        ]
+        && request.resource.data.status == 'abierto'
+        && request.resource.data.priority in ['baja', 'media', 'alta', 'critica']
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function validAssignee() {
+      return request.resource.data.assignedTo == null
+        || (exists(/databases/$(database)/documents/users/$(request.resource.data.assignedTo))
+          && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.active == true
+          && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.role in ['admin', 'agent']);
+    }
+
+    match /users/{userId} {
+      allow read: if activeUser() && (request.auth.uid == userId || staff());
+      allow write: if false;
+    }
+
+    match /tickets/{ticketId} {
+      allow read: if staff() || (activeUser() && resource.data.createdBy == request.auth.uid);
+      allow create: if activeUser() && validTicket();
+      allow update: if staff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'priority', 'assignedTo', 'updatedAt', 'closedAt'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedAt'])
+          || request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          || (request.resource.data.status == 'resuelto'
+            ? request.resource.data.closedAt == request.time
+            : request.resource.data.closedAt == null))
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.status in ['abierto', 'progreso', 'revision', 'resuelto']
+        && request.resource.data.priority in ['baja', 'media', 'alta', 'critica']
+        && validAssignee();
+      allow delete: if administrator();
+
+      match /comments/{commentId} {
+        function canReadParent() {
+          return staff()
+            || (activeUser()
+              && get(/databases/$(database)/documents/tickets/$(ticketId)).data.createdBy == request.auth.uid);
+        }
+
+        allow read: if canReadParent();
+        allow create: if canReadParent()
+          && request.resource.data.keys().hasOnly(['authorId', 'authorName', 'text', 'createdAt'])
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorName
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /errorReports/{reportId} {
+      allow read: if administrator();
+      allow update: if administrator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reviewStatus'])
+        && request.resource.data.reviewStatus in ['pending', 'reviewed'];
+      allow create, delete: if false;
+    }
+
+    match /errorReportRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+  }
+}
