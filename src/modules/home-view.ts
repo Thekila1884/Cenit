@@ -52,6 +52,10 @@ export function renderHomeView() {
             <p class="eyebrow">MESA DE AYUDA · VENDORS</p>
             <h1>El soporte de tu equipo, <span>en orden.</span></h1>
             <p class="hero-description">Cenit reúne solicitudes, responsables y avances en un mismo lugar para que cada necesidad tenga seguimiento hasta su resolución.</p>
+            <div class="company-site">
+              <p>Esta es una app de Vendors, S.A. Visita nuestro sitio web:</p>
+              <a class="button secondary" href="https://www.vendedores.site/" target="_blank" rel="noopener noreferrer">Vendedores.site <span aria-hidden="true">↗</span></a>
+            </div>
             <div class="hero-actions">
               <a class="button primary" href="#/login">Ingresar al sistema</a>
               <a class="button secondary" href="#como-funciona">Conocer cómo funciona</a>

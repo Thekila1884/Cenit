@@ -59,6 +59,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .hero-copy h1 { max-width: 610px; margin: 0 0 20px; font-size: clamp(42px, 5.3vw, 67px); line-height: 1.08; letter-spacing: -3.2px; }
 .hero-copy h1 span { color: var(--blue); }
 .hero-description { max-width: 510px; margin: 0; color: #65717e; font-size: 17px; line-height: 1.75; }
+.company-site { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 20px; }
+.company-site p { margin: 0; color: #65717e; font-size: 12px; }
+.company-site .button { min-height: 36px; font-size: 11px; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 28px; }
 .hero-actions .button { min-height: 47px; }
 .hero-proof { display: flex; align-items: center; gap: 9px; margin-top: 29px; color: #78838e; font-size: 12px; }
