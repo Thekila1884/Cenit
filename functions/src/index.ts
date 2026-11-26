@@ -1,18 +1,12 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { defineSecret, defineString } from 'firebase-functions/params';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 initializeApp();
 
 const db = getFirestore();
-const resendApiKey = defineSecret('RESEND_API_KEY');
-const resendFromEmail = defineString('RESEND_FROM_EMAIL', {
-  default: 'Cenit <soporte@vendedores.site>',
-});
-const reportRecipient = 'soporte@vendedores.site';
 const roles = ['admin', 'agent', 'user'] as const;
 type Role = (typeof roles)[number];
 
@@ -25,29 +19,10 @@ async function applyRateLimit(collectionName: string, ipAddress: string) {
     const snapshot = await transaction.get(rateLimitRef);
     const previousAttempt = snapshot.get('lastAttemptAt')?.toMillis();
     if (previousAttempt && now - previousAttempt < 60_000) {
-      throw new HttpsError('resource-exhausted', 'Espera un minuto antes de enviar otro reporte.');
+      throw new HttpsError('resource-exhausted', 'Espera un minuto antes de enviar otra solicitud.');
     }
     transaction.set(rateLimitRef, { lastAttemptAt: FieldValue.serverTimestamp() });
   });
-}
-
-async function sendSupportEmail(subject: string, text: string, replyTo?: string) {
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resendApiKey.value()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: resendFromEmail.value(),
-      to: [reportRecipient],
-      subject,
-      text,
-      ...(replyTo ? { reply_to: replyTo } : {}),
-    }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`Resend respondió con el estado ${response.status}.`);
 }
 
 export const inviteUser = onCall(async (request) => {
@@ -98,7 +73,7 @@ export const inviteUser = onCall(async (request) => {
     }
 });
 
-export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (request) => {
+export const submitErrorReport = onCall(async (request) => {
   if (request.auth && request.auth.token.active !== true) {
     throw new HttpsError('permission-denied', 'La cuenta no está activa.');
   }
@@ -120,6 +95,7 @@ export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (requ
   await applyRateLimit('errorReportRateLimits', request.rawRequest.ip || 'unknown');
 
   const reportRef = db.collection('errorReports').doc();
+  const emailStatusToken = randomBytes(32).toString('base64url');
   await reportRef.set({
     description,
     reporterEmail,
@@ -127,87 +103,42 @@ export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (requ
     route,
     createdAt: FieldValue.serverTimestamp(),
     emailStatus: 'sending',
+    emailStatusTokenHash: createHash('sha256').update(emailStatusToken).digest('hex'),
     reviewStatus: 'pending',
   });
 
-  let emailSent = false;
-  try {
-    await sendSupportEmail(
-      'Nuevo reporte de error en Cenit',
-      [
-        'Se recibió un nuevo reporte de error en Cenit.',
-        '',
-        `Reporte: ${reportRef.id}`,
-        `Correo de contacto: ${reporterEmail ?? 'No indicado'}`,
-        `UID: ${request.auth?.uid ?? 'No autenticado'}`,
-        `Pantalla: ${route || 'No especificada'}`,
-        '',
-        'Descripción:',
-        description,
-      ].join('\n'),
-    );
-    await reportRef.update({ emailStatus: 'sent' });
-    emailSent = true;
-  } catch (error) {
-    console.error('Failed to send error report email', {
-      reportId: reportRef.id,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-    await reportRef.update({ emailStatus: 'failed' });
-  }
-
-  return { reportId: reportRef.id, emailSent };
+  return { reportId: reportRef.id, emailStatusToken };
 });
 
-export const contactSales = onCall({ secrets: [resendApiKey] }, async (request) => {
-  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
-  const company = typeof request.data?.company === 'string' ? request.data.company.trim() : '';
-  const email = typeof request.data?.email === 'string' ? request.data.email.trim().toLowerCase() : '';
-  const phone = typeof request.data?.phone === 'string' ? request.data.phone.trim() : '';
-  const message = typeof request.data?.message === 'string' ? request.data.message.trim() : '';
-  const planNames: Record<string, string> = {
-    basico: 'Básico',
-    profesional: 'Profesional',
-    empresarial: 'Empresarial',
-  };
-  const planId = typeof request.data?.plan === 'string' ? request.data.plan : '';
-  const planName = Object.hasOwn(planNames, planId) ? planNames[planId] : undefined;
-
-  if (!name || name.length > 120 || !planName) {
-    throw new HttpsError('invalid-argument', 'Verifica tu nombre y el plan seleccionado.');
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    throw new HttpsError('invalid-argument', 'Verifica el correo electrónico.');
-  }
-  if (company.length > 120 || phone.length > 40 || message.length > 2000) {
-    throw new HttpsError('invalid-argument', 'Verifica los datos ingresados.');
+export const updateErrorReportEmailStatus = onCall(async (request) => {
+  const reportId = typeof request.data?.reportId === 'string' ? request.data.reportId : '';
+  const emailStatusToken = typeof request.data?.emailStatusToken === 'string' ? request.data.emailStatusToken : '';
+  const emailStatus = request.data?.emailStatus;
+  if (!/^[A-Za-z0-9]{20}$/.test(reportId)
+    || !/^[A-Za-z0-9_-]{43}$/.test(emailStatusToken)
+    || (emailStatus !== 'sent' && emailStatus !== 'failed')) {
+    throw new HttpsError('invalid-argument', 'No se pudo actualizar el estado del reporte.');
   }
 
-  await applyRateLimit('salesContactRateLimits', request.rawRequest.ip || 'unknown');
-
-  try {
-    await sendSupportEmail(
-      `Solicitud comercial de Cenit: plan ${planName}`,
-      [
-        'Nueva solicitud de contacto comercial desde Cenit.',
-        '',
-        `Plan seleccionado: ${planName}`,
-        `Nombre: ${name}`,
-        `Empresa: ${company || 'No indicada'}`,
-        `Correo: ${email}`,
-        `Teléfono: ${phone || 'No indicado'}`,
-        '',
-        'Mensaje:',
-        message || 'Sin mensaje adicional.',
-      ].join('\n'),
-      email,
-    );
-    return { sent: true };
-  } catch (error) {
-    console.error('Failed to send Cenit sales contact email', {
-      planId,
-      error: error instanceof Error ? error.message : 'Unknown error',
+  const reportRef = db.doc(`errorReports/${reportId}`);
+  const tokenHash = createHash('sha256').update(emailStatusToken).digest('hex');
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reportRef);
+    if (!snapshot.exists) throw new HttpsError('not-found', 'No se encontró el reporte.');
+    const storedHash = snapshot.get('emailStatusTokenHash');
+    if (typeof storedHash !== 'string'
+      || !/^[a-f0-9]{64}$/.test(storedHash)
+      || !timingSafeEqual(Buffer.from(tokenHash, 'hex'), Buffer.from(storedHash, 'hex'))) {
+      throw new HttpsError('permission-denied', 'No se pudo autorizar la actualización del reporte.');
+    }
+    if (snapshot.get('emailStatus') !== 'sending') {
+      throw new HttpsError('failed-precondition', 'El estado del correo ya fue actualizado.');
+    }
+    transaction.update(reportRef, {
+      emailStatus,
+      emailStatusTokenHash: FieldValue.delete(),
     });
-    throw new HttpsError('unavailable', 'No se pudo enviar la solicitud ahora. Inténtalo más tarde.');
-  }
+  });
+
+  return { updated: true };
 });

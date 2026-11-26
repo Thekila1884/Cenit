@@ -84,6 +84,32 @@ function errorText(error: unknown): string {
   return messages[code] ?? (error instanceof Error ? error.message : 'Ocurrió un error inesperado.');
 }
 
+async function sendVercelEmail(path: string, payload: Record<string, string>) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error('El servicio de correo respondió en un formato inesperado.');
+  }
+
+  if (!response.ok) {
+    const message = typeof result === 'object' && result !== null
+      && 'error' in result && typeof result.error === 'string'
+      ? result.error
+      : 'No se pudo enviar el correo.';
+    throw new Error(message);
+  }
+  if (typeof result !== 'object' || result === null || !('sent' in result) || result.sent !== true) {
+    throw new Error('El servicio de correo no confirmó el envío.');
+  }
+}
+
 function setBusy(value: boolean) {
   root!.querySelectorAll<HTMLButtonElement>('button[type="submit"]').forEach((button) => {
     button.disabled = value;
@@ -317,21 +343,52 @@ async function handleErrorReport(form: HTMLFormElement) {
   const data = new FormData(form);
   const description = String(data.get('description') ?? '').trim();
   if (!description) return;
+  if (String(data.get('website') ?? '').trim()) return showToast('No se pudo procesar el reporte.');
   const submitReport = httpsCallable<
     { description: string; email: string; route: string },
-    { reportId: string; emailSent: boolean }
+    { reportId: string; emailStatusToken: string }
   >(functions, 'submitErrorReport');
+  const updateEmailStatus = httpsCallable<
+    { reportId: string; emailStatusToken: string; emailStatus: 'sent' | 'failed' },
+    { updated: boolean }
+  >(functions, 'updateErrorReportEmailStatus');
   setBusy(true);
-  let message = '';
   try {
     const result = await submitReport({
       description,
       email: String(data.get('email') ?? '').trim(),
       route: String(data.get('route') ?? ''),
     });
-    message = result.data.emailSent
+    let emailSent = false;
+    let emailFailure = '';
+    try {
+      await sendVercelEmail('/api/send-error-report', {
+        reportId: result.data.reportId,
+        description,
+        email: String(data.get('email') ?? '').trim(),
+        route: String(data.get('route') ?? ''),
+        website: String(data.get('website') ?? ''),
+      });
+      emailSent = true;
+    } catch (error) {
+      emailFailure = errorText(error);
+    }
+
+    let statusFailure = '';
+    try {
+      await updateEmailStatus({
+        reportId: result.data.reportId,
+        emailStatusToken: result.data.emailStatusToken,
+        emailStatus: emailSent ? 'sent' : 'failed',
+      });
+    } catch (error) {
+      statusFailure = errorText(error);
+    }
+
+    let message = emailSent
       ? 'Reporte enviado y guardado en la bandeja de Cenit.'
-      : 'El reporte quedó guardado en Cenit, pero no se pudo enviar el correo.';
+      : `Reporte guardado en Cenit, pero no se pudo enviar el correo. ${emailFailure}`;
+    if (statusFailure) message += ` No se pudo actualizar su estado: ${statusFailure}`;
     root!.querySelector<HTMLDialogElement>('#modal')?.close();
     if (activeView === 'reports') {
       try {
@@ -354,26 +411,17 @@ async function handleSalesContact(form: HTMLFormElement) {
   const data = new FormData(form);
   const plan = String(data.get('plan') ?? '');
   if (!isSalesPlanId(plan)) return showToast('Selecciona uno de los planes disponibles.');
-  const contactSales = httpsCallable<
-    {
-      name: string;
-      company: string;
-      email: string;
-      phone: string;
-      message: string;
-      plan: SalesPlanId;
-    },
-    { sent: boolean }
-  >(functions, 'contactSales');
+  if (String(data.get('website') ?? '').trim()) return showToast('No se pudo procesar la solicitud.');
   setBusy(true);
   try {
-    await contactSales({
+    await sendVercelEmail('/api/contact-sales', {
       name: String(data.get('name') ?? '').trim(),
       company: String(data.get('company') ?? '').trim(),
       email: String(data.get('email') ?? '').trim(),
       phone: String(data.get('phone') ?? '').trim(),
       message: String(data.get('message') ?? '').trim(),
       plan,
+      website: String(data.get('website') ?? ''),
     });
     root!.querySelector<HTMLDialogElement>('#modal')?.close();
     showToast('Solicitud enviada a ventas. Nos pondremos en contacto contigo.');

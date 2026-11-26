@@ -24,6 +24,7 @@ export function renderSalesContactDialog(plan: SalesPlanId) {
         <label>Teléfono (opcional)<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
         <label>Mensaje (opcional)<textarea name="message" rows="4" maxlength="2000" placeholder="Cuéntanos qué necesita tu equipo."></textarea></label>
       </div>
+      <label class="honeypot-field" aria-hidden="true">Sitio web<input name="website" tabindex="-1" autocomplete="off"></label>
       <input type="hidden" name="plan" value="${escapeHtml(plan)}">
       <div class="dialog-actions"><button class="button secondary" type="button" data-action="close-modal">Cancelar</button><button class="button primary" type="submit">Enviar solicitud</button></div>
     </form>`;

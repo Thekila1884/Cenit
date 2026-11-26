@@ -8,6 +8,7 @@ export function renderErrorReportDialog(email: string, route: string) {
       <p class="muted">El reporte se guardará en Cenit y se enviará a soporte@vendedores.site. No incluyas contraseñas ni información sensible.</p>
       <label>Correo de contacto (opcional)<input name="email" type="email" maxlength="254" value="${escapeHtml(email)}" autocomplete="email"></label>
       <label>¿Qué ocurrió?<textarea name="description" rows="6" maxlength="2000" required placeholder="Describe qué estabas haciendo y qué error apareció."></textarea></label>
+      <label class="honeypot-field" aria-hidden="true">Sitio web<input name="website" tabindex="-1" autocomplete="off"></label>
       <input type="hidden" name="route" value="${escapeHtml(route)}">
       <div class="dialog-actions"><button class="button secondary" type="button" data-action="close-modal">Cancelar</button><button class="button primary" type="submit">Enviar reporte</button></div>
     </form>`;
