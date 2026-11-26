@@ -1,11 +1,21 @@
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
-
-let adminServices;
+let adminServicesPromise;
 
 export function getFirebaseAdmin() {
-  if (adminServices) return adminServices;
+  if (!adminServicesPromise) {
+    adminServicesPromise = createFirebaseAdmin().catch((error) => {
+      adminServicesPromise = undefined;
+      throw error;
+    });
+  }
+  return adminServicesPromise;
+}
+
+async function createFirebaseAdmin() {
+  const [appModule, authModule, firestoreModule] = await Promise.all([
+    import('firebase-admin/app'),
+    import('firebase-admin/auth'),
+    import('firebase-admin/firestore'),
+  ]);
 
   let credential;
   let projectId = process.env.VITE_FIREBASE_PROJECT_ID;
@@ -24,16 +34,19 @@ export function getFirebaseAdmin() {
       || typeof serviceAccount.private_key !== 'string') {
       throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON no contiene una cuenta de servicio válida.');
     }
-    credential = cert(serviceAccount);
+    credential = appModule.cert(serviceAccount);
     projectId = serviceAccount.project_id;
   } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    credential = applicationDefault();
+    credential = appModule.applicationDefault();
   } else {
     throw new Error('Configura FIREBASE_SERVICE_ACCOUNT_JSON en Vercel.');
   }
 
-  const app = getApps().find((item) => item.name === 'cenit-vercel-api')
-    ?? initializeApp({ credential, ...(projectId ? { projectId } : {}) }, 'cenit-vercel-api');
-  adminServices = { auth: getAuth(app), db: getFirestore(app) };
-  return adminServices;
+  const app = appModule.getApps().find((item) => item.name === 'cenit-vercel-api')
+    ?? appModule.initializeApp({ credential, ...(projectId ? { projectId } : {}) }, 'cenit-vercel-api');
+  return {
+    auth: authModule.getAuth(app),
+    db: firestoreModule.getFirestore(app),
+    FieldValue: firestoreModule.FieldValue,
+  };
 }

@@ -3,7 +3,6 @@ import { getFirebaseAdmin } from '../server/firebase-admin.js';
 import { HttpError } from '../server/http-error.js';
 import { isRateLimited, isSameOrigin, isValidEmail } from '../server/request-guards.js';
 import { hasAuthorizationHeader, isValidCompanyId, requireTenantUser } from '../server/tenant-auth.js';
-import { FieldValue } from 'firebase-admin/firestore';
 
 export default async function handler(request, response) {
   response.setHeader('Cache-Control', 'no-store');
@@ -30,7 +29,7 @@ export default async function handler(request, response) {
   if (email && !isValidEmail(email)) return response.status(400).json({ error: 'Verifica el correo de contacto.' });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
+    const { auth, db, FieldValue } = await getFirebaseAdmin();
     const reporter = hasAuthorizationHeader(request)
       ? await requireTenantUser(request, auth, db)
       : null;

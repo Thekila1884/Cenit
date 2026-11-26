@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { FieldValue } from 'firebase-admin/firestore';
 import { getFirebaseAdmin } from '../server/firebase-admin.js';
 import { HttpError } from '../server/http-error.js';
 import { isRateLimited, isSameOrigin, isValidEmail } from '../server/request-guards.js';
@@ -30,7 +29,7 @@ export default async function handler(request, response) {
   }
 
   try {
-    const { auth, db } = getFirebaseAdmin();
+    const { auth, db, FieldValue } = await getFirebaseAdmin();
     const inviter = await requireTenantUser(request, auth, db);
     if (inviter.role !== 'admin') throw new HttpError(403, 'Solo un administrador puede invitar usuarios.');
 
