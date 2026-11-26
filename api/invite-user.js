@@ -28,11 +28,14 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'Verifica nombre, correo, departamento y rol.' });
   }
 
+  let failureStage = 'firebase-admin';
   try {
     const { auth, db, FieldValue } = await getFirebaseAdmin();
+    failureStage = 'authenticate-inviter';
     const inviter = await requireTenantUser(request, auth, db);
     if (inviter.role !== 'admin') throw new HttpError(403, 'Solo un administrador puede invitar usuarios.');
 
+    failureStage = 'check-company';
     const companySnapshot = await db.doc(`companies/${inviter.companyId}`).get();
     if (!companySnapshot.exists || companySnapshot.get('active') !== true) {
       throw new HttpError(409, 'La empresa asociada no está configurada o activa.');
@@ -43,6 +46,7 @@ export default async function handler(request, response) {
 
     let uid;
     try {
+      failureStage = 'create-account';
       const user = await auth.createUser({
         email,
         displayName: name,
@@ -51,7 +55,9 @@ export default async function handler(request, response) {
       });
       uid = user.uid;
 
+      failureStage = 'assign-claims';
       await auth.setCustomUserClaims(uid, { role, active: true, companyId: inviter.companyId });
+      failureStage = 'save-profile';
       await db.doc(`users/${uid}`).set({
         uid,
         name,
@@ -63,8 +69,10 @@ export default async function handler(request, response) {
         createdAt: FieldValue.serverTimestamp(),
       });
 
+      failureStage = 'generate-password-link';
       const passwordSetupLink = await auth.generatePasswordResetLink(email);
       const loginUrl = new URL('/#/login', request.headers.origin).toString();
+      failureStage = 'send-invitation-email';
       await sendEmail(
         email,
         'Tu invitación para acceder a Cenit',
@@ -83,12 +91,15 @@ export default async function handler(request, response) {
       );
       return response.status(201).json({ email, sent: true });
     } catch (error) {
+      const failedAt = failureStage;
       if (uid) {
+        failureStage = 'rollback-invitation';
         await Promise.all([
           auth.deleteUser(uid),
           db.doc(`users/${uid}`).delete(),
         ]);
       }
+      failureStage = failedAt;
       const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : '';
       if (code === 'auth/email-already-exists') {
         throw new HttpError(409, 'Ya existe una cuenta con ese correo.');
@@ -98,8 +109,12 @@ export default async function handler(request, response) {
   } catch (error) {
     if (error instanceof HttpError) return response.status(error.status).json({ error: error.message });
     console.error('Vercel invite-user request failed', {
+      stage: failureStage,
       error: error instanceof Error ? error.message : 'Unknown error',
     });
-    return response.status(503).json({ error: 'No se pudo completar la invitación ahora.' });
+    return response.status(503).json({
+      error: 'No se pudo completar la invitación ahora.',
+      code: failureStage,
+    });
   }
 }
