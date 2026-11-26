@@ -10,6 +10,10 @@ const db = getFirestore();
 const roles = ['admin', 'agent', 'user'] as const;
 type Role = (typeof roles)[number];
 
+function validCompanyId(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{10}$/.test(value);
+}
+
 async function applyRateLimit(collectionName: string, ipAddress: string) {
   const key = createHash('sha256').update(ipAddress).digest('hex');
   const rateLimitRef = db.doc(`${collectionName}/${key}`);
@@ -28,6 +32,18 @@ async function applyRateLimit(collectionName: string, ipAddress: string) {
 export const inviteUser = onCall(async (request) => {
     if (!request.auth || request.auth.token.active !== true || request.auth.token.role !== 'admin') {
       throw new HttpsError('permission-denied', 'Solo un administrador activo puede invitar usuarios.');
+    }
+    const companyId = request.auth.token.companyId;
+    if (!validCompanyId(companyId)) {
+      throw new HttpsError('failed-precondition', 'La cuenta administradora no tiene una empresa asignada.');
+    }
+
+    const inviterSnapshot = await db.doc(`users/${request.auth.uid}`).get();
+    if (!inviterSnapshot.exists
+      || inviterSnapshot.get('active') !== true
+      || inviterSnapshot.get('role') !== 'admin'
+      || inviterSnapshot.get('companyId') !== companyId) {
+      throw new HttpsError('permission-denied', 'El perfil administrador no está autorizado.');
     }
 
     const email = typeof request.data?.email === 'string' ? request.data.email.trim().toLowerCase() : '';
@@ -49,9 +65,10 @@ export const inviteUser = onCall(async (request) => {
       });
       uid = user.uid;
 
-      await getAuth().setCustomUserClaims(uid, { role, active: true });
+      await getAuth().setCustomUserClaims(uid, { role, active: true, companyId });
       await db.doc(`users/${uid}`).set({
         uid,
+        companyId,
         name,
         email,
         department,
@@ -84,8 +101,12 @@ export const submitErrorReport = onCall(async (request) => {
   const inputEmail = typeof request.data?.email === 'string' ? request.data.email.trim() : '';
   const route = typeof request.data?.route === 'string' ? request.data.route.slice(0, 120) : '';
   const reporterEmail = inputEmail || null;
+  const requestedCompanyId = typeof request.data?.companyId === 'string'
+    ? request.data.companyId.trim()
+    : '';
+  const companyId = request.auth?.token.companyId ?? requestedCompanyId;
 
-  if (!description || description.length > 2000) {
+  if (!description || description.length > 2000 || !validCompanyId(companyId)) {
     throw new HttpsError('invalid-argument', 'Describe el error en un máximo de 2000 caracteres.');
   }
   if (reporterEmail && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reporterEmail) || reporterEmail.length > 254)) {
@@ -93,6 +114,17 @@ export const submitErrorReport = onCall(async (request) => {
   }
 
   await applyRateLimit('errorReportRateLimits', request.rawRequest.ip || 'unknown');
+  if (!(await db.doc(`companies/${companyId}`).get()).exists) {
+    throw new HttpsError('invalid-argument', 'Verifica el ID de empresa.');
+  }
+  if (request.auth) {
+    const profileSnapshot = await db.doc(`users/${request.auth.uid}`).get();
+    if (!profileSnapshot.exists
+      || profileSnapshot.get('active') !== true
+      || profileSnapshot.get('companyId') !== companyId) {
+      throw new HttpsError('permission-denied', 'El reporte no corresponde a la empresa de tu perfil.');
+    }
+  }
 
   const reportRef = db.collection('errorReports').doc();
   const emailStatusToken = randomBytes(32).toString('base64url');
@@ -100,6 +132,7 @@ export const submitErrorReport = onCall(async (request) => {
     description,
     reporterEmail,
     reporterUid: request.auth?.uid ?? null,
+    companyId,
     route,
     createdAt: FieldValue.serverTimestamp(),
     emailStatus: 'sending',

@@ -6,6 +6,7 @@ export type Priority = 'baja' | 'media' | 'alta' | 'critica';
 
 export interface UserProfile {
   uid: string;
+  companyId: string;
   name: string;
   email: string;
   department: string;
@@ -15,6 +16,7 @@ export interface UserProfile {
 
 export interface Ticket {
   id: string;
+  companyId: string;
   title: string;
   description: string;
   category: string;
@@ -39,6 +41,7 @@ export interface TicketComment {
 
 export interface ErrorReport {
   id: string;
+  companyId: string;
   description: string;
   reporterEmail: string | null;
   reporterUid: string | null;

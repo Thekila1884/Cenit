@@ -1,11 +1,12 @@
 import { escapeHtml } from './escape-html';
 import type { ErrorReport } from '../types';
 
-export function renderErrorReportDialog(email: string, route: string) {
+export function renderErrorReportDialog(email: string, route: string, companyId: string, companyIdReadOnly = false) {
   return `
     <form id="error-report-form" class="dialog-content">
       <div class="dialog-heading"><div><p class="eyebrow">AYÚDANOS A MEJORAR</p><h2>Reportar un error</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
       <p class="muted">El reporte se guardará en Cenit y se enviará a soporte@vendedores.site. No incluyas contraseñas ni información sensible.</p>
+      <label>ID de empresa<input name="companyId" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" value="${escapeHtml(companyId)}" ${companyIdReadOnly ? 'readonly' : ''} required></label>
       <label>Correo de contacto (opcional)<input name="email" type="email" maxlength="254" value="${escapeHtml(email)}" autocomplete="email"></label>
       <label>¿Qué ocurrió?<textarea name="description" rows="6" maxlength="2000" required placeholder="Describe qué estabas haciendo y qué error apareció."></textarea></label>
       <label class="honeypot-field" aria-hidden="true">Sitio web<input name="website" tabindex="-1" autocomplete="off"></label>

@@ -12,8 +12,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { auth, configurationError, db, functions } from './firebase';
+import { auth, configurationError, db } from './firebase';
 import { renderLoginView } from './modules/auth-view';
 import { escapeHtml } from './modules/escape-html';
 import { renderHomeView } from './modules/home-view';
@@ -44,6 +43,9 @@ let users: UserProfile[] = [];
 let reports: ErrorReport[] = [];
 let reportsLoadError = '';
 let activeView: AuthenticatedRoute = 'mine';
+let companyName = '';
+let loginCompanyId = '';
+let pendingLoginMessage = '';
 let search = '';
 let statusFilter: TicketStatus | '' = '';
 let toastTimer = 0;
@@ -84,10 +86,21 @@ function errorText(error: unknown): string {
   return messages[code] ?? (error instanceof Error ? error.message : 'Ocurrió un error inesperado.');
 }
 
-async function sendVercelEmail(path: string, payload: Record<string, string>) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function postVercelApi(
+  path: string,
+  payload: Record<string, string>,
+  idToken?: string,
+): Promise<Record<string, unknown>> {
   const response = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+    },
     body: JSON.stringify(payload),
   });
 
@@ -99,13 +112,20 @@ async function sendVercelEmail(path: string, payload: Record<string, string>) {
   }
 
   if (!response.ok) {
-    const message = typeof result === 'object' && result !== null
-      && 'error' in result && typeof result.error === 'string'
+    const message = isRecord(result) && typeof result.error === 'string'
       ? result.error
-      : 'No se pudo enviar el correo.';
+      : 'No se pudo completar la solicitud.';
     throw new Error(message);
   }
-  if (typeof result !== 'object' || result === null || !('sent' in result) || result.sent !== true) {
+  if (!isRecord(result)) {
+    throw new Error('El servicio respondió en un formato inesperado.');
+  }
+  return result;
+}
+
+async function sendVercelEmail(path: string, payload: Record<string, string>) {
+  const result = await postVercelApi(path, payload);
+  if (result.sent !== true) {
     throw new Error('El servicio de correo no confirmó el envío.');
   }
 }
@@ -121,32 +141,51 @@ async function loadProfile(user: User): Promise<UserProfile> {
   if (!snapshot.exists()) throw new Error('Tu cuenta aún no tiene un perfil autorizado. Contacta al administrador.');
   const data = snapshot.data() as UserProfile;
   const claimRole = token.claims.role;
-  if (!data.active || token.claims.active !== true || data.uid !== user.uid || data.role !== claimRole) {
+  const claimCompanyId = token.claims.companyId;
+  if (!data.active || token.claims.active !== true || data.uid !== user.uid
+    || data.role !== claimRole || data.companyId !== claimCompanyId) {
     throw new Error('La cuenta no está activa o sus permisos requieren revisión. Contacta al administrador.');
   }
   if (!['admin', 'agent', 'user'].includes(data.role)) throw new Error('El perfil tiene un rol no válido.');
+  if (!/^\d{10}$/.test(data.companyId)) throw new Error('El perfil no tiene un ID de empresa válido. Contacta al administrador.');
   return data;
+}
+
+async function loadCompany() {
+  if (!profile) return;
+  const snapshot = await getDoc(doc(db, 'companies', profile.companyId));
+  if (!snapshot.exists() || snapshot.get('companyId') !== profile.companyId || snapshot.get('active') !== true) {
+    throw new Error('La empresa asociada no está configurada. Contacta al administrador.');
+  }
+  const name = snapshot.get('name');
+  if (typeof name !== 'string' || !name.trim()) throw new Error('El perfil de empresa no es válido.');
+  companyName = name;
 }
 
 async function loadTickets() {
   if (!currentUser || !profile) return;
   const source = collection(db, 'tickets');
-  const result = isStaff()
-    ? await getDocs(source)
-    : await getDocs(query(source, where('createdBy', '==', currentUser.uid)));
+  const tenantQuery = isStaff()
+    ? query(source, where('companyId', '==', profile.companyId))
+    : query(source, where('companyId', '==', profile.companyId), where('createdBy', '==', currentUser.uid));
+  const result = await getDocs(tenantQuery);
   tickets = result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }) as Ticket);
   tickets.sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
 }
 
 async function loadUsers() {
-  if (!isStaff()) return;
-  const result = await getDocs(collection(db, 'users'));
+  if (!isStaff() || !profile) return;
+  const result = await getDocs(query(collection(db, 'users'), where('companyId', '==', profile.companyId)));
   users = result.docs.map((snapshot) => snapshot.data() as UserProfile);
 }
 
 async function loadReports() {
-  if (!isAdmin()) return;
-  const result = await getDocs(query(collection(db, 'errorReports'), orderBy('createdAt', 'desc')));
+  if (!isAdmin() || !profile) return;
+  const result = await getDocs(query(
+    collection(db, 'errorReports'),
+    where('companyId', '==', profile.companyId),
+    orderBy('createdAt', 'desc'),
+  ));
   reports = result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }) as ErrorReport);
 }
 
@@ -198,7 +237,7 @@ function renderApp() {
   const pageDescription = activeView === 'reports'
     ? 'Revisa los errores reportados por el equipo.'
     : activeView === 'users'
-      ? 'Invita personas y revisa sus roles.'
+      ? 'Invita personas y revisa sus roles dentro de tu empresa.'
       : activeView === 'tickets'
         ? 'Solicitudes de toda la organización.'
         : 'Tus solicitudes y su avance.';
@@ -225,6 +264,7 @@ function renderApp() {
           <div class="page-heading"><div><p class="eyebrow">GESTIÓN DE SOPORTE</p><h1>${pageTitle}</h1><p class="muted">${pageDescription}</p></div>
             ${activeView === 'users' ? '<button class="button primary" data-action="invite"><span>＋</span> Invitar usuario</button>' : activeView === 'reports' ? '' : '<button class="button primary" data-action="new-ticket"><span>＋</span> Nueva solicitud</button>'}
           </div>
+          ${activeView === 'users' ? `<p class="notice">Empresa: <strong>${escapeHtml(companyName)}</strong> · Código ${escapeHtml(profile.companyId)}</p>` : ''}
           ${activeView === 'users' ? renderUsersTable(users, roleName) : activeView === 'reports'
             ? reportsLoadError
               ? `<div class="notice error" role="alert">${escapeHtml(reportsLoadError)}</div>`
@@ -299,7 +339,7 @@ async function renderTicketDetail(id: string) {
 
 function renderInvite() {
   const dialog = root!.querySelector<HTMLDialogElement>('#modal')!;
-  dialog.innerHTML = renderInviteDialog();
+  dialog.innerHTML = renderInviteDialog(companyName, profile?.companyId ?? '');
   if (!dialog.open) dialog.showModal();
 }
 
@@ -309,7 +349,10 @@ function renderErrorReport() {
   const email = currentUser?.email
     ?? root!.querySelector<HTMLInputElement>('#login-form [name="email"]')?.value.trim()
     ?? '';
-  dialog.innerHTML = renderErrorReportDialog(email, window.location.hash.slice(0, 120));
+  const companyId = profile?.companyId
+    ?? root!.querySelector<HTMLInputElement>('#login-form [name="companyId"]')?.value.trim()
+    ?? '';
+  dialog.innerHTML = renderErrorReportDialog(email, window.location.hash.slice(0, 120), companyId, Boolean(profile));
   dialog.showModal();
 }
 
@@ -327,12 +370,19 @@ function renderInviteLink(email: string, link: string) {
 
 async function handleLogin(form: HTMLFormElement) {
   const data = new FormData(form);
+  const companyId = String(data.get('companyId') ?? '').trim();
   const email = String(data.get('email') ?? '').trim();
   const password = String(data.get('password') ?? '');
+  if (!/^\d{10}$/.test(companyId)) {
+    renderLogin('Ingresa el ID de empresa de 10 dígitos.');
+    return;
+  }
+  loginCompanyId = companyId;
   setBusy(true);
   try {
     await signInWithEmailAndPassword(auth, email, password);
   } catch (error) {
+    loginCompanyId = '';
     renderLogin(errorText(error));
   } finally {
     setBusy(false);
@@ -344,58 +394,25 @@ async function handleErrorReport(form: HTMLFormElement) {
   const description = String(data.get('description') ?? '').trim();
   if (!description) return;
   if (String(data.get('website') ?? '').trim()) return showToast('No se pudo procesar el reporte.');
-  const submitReport = httpsCallable<
-    { description: string; email: string; route: string },
-    { reportId: string; emailStatusToken?: string; emailSent?: boolean }
-  >(functions, 'submitErrorReport');
-  const updateEmailStatus = httpsCallable<
-    { reportId: string; emailStatusToken: string; emailStatus: 'sent' | 'failed' },
-    { updated: boolean }
-  >(functions, 'updateErrorReportEmailStatus');
   setBusy(true);
   try {
-    const result = await submitReport({
+    const idToken = currentUser ? await currentUser.getIdToken() : undefined;
+    const result = await postVercelApi('/api/send-error-report', {
+      companyId: String(data.get('companyId') ?? '').trim(),
       description,
       email: String(data.get('email') ?? '').trim(),
       route: String(data.get('route') ?? ''),
-    });
-    let emailSent = result.data.emailSent === true;
-    let emailFailure = result.data.emailSent === false
-      ? 'El servicio de correo informó que no se pudo enviar.'
-      : '';
-    let statusFailure = '';
-    if (result.data.emailStatusToken) {
-      emailSent = false;
-      try {
-        await sendVercelEmail('/api/send-error-report', {
-          reportId: result.data.reportId,
-          description,
-          email: String(data.get('email') ?? '').trim(),
-          route: String(data.get('route') ?? ''),
-          website: String(data.get('website') ?? ''),
-        });
-        emailSent = true;
-      } catch (error) {
-        emailFailure = errorText(error);
-      }
-
-      try {
-        await updateEmailStatus({
-          reportId: result.data.reportId,
-          emailStatusToken: result.data.emailStatusToken,
-          emailStatus: emailSent ? 'sent' : 'failed',
-        });
-      } catch (error) {
-        statusFailure = errorText(error);
-      }
-    } else if (typeof result.data.emailSent !== 'boolean') {
-      throw new Error('Firebase no devolvió el estado del reporte.');
+      website: String(data.get('website') ?? ''),
+    }, idToken);
+    if (result.saved !== true || typeof result.sent !== 'boolean') {
+      throw new Error('El servicio no confirmó que el reporte quedó guardado.');
     }
 
-    let message = emailSent
+    let message = result.sent
       ? 'Reporte enviado y guardado en la bandeja de Cenit.'
-      : `Reporte guardado en Cenit, pero no se pudo enviar el correo. ${emailFailure}`;
-    if (statusFailure) message += ` No se pudo actualizar su estado: ${statusFailure}`;
+      : typeof result.message === 'string'
+        ? result.message
+        : 'Reporte guardado en Cenit, pero no se pudo enviar el correo.';
     root!.querySelector<HTMLDialogElement>('#modal')?.close();
     if (activeView === 'reports') {
       try {
@@ -447,6 +464,7 @@ async function handleTicketCreate(form: HTMLFormElement) {
   setBusy(true);
   try {
     await addDoc(collection(db, 'tickets'), {
+      companyId: profile.companyId,
       title,
       description: String(data.get('description') ?? '').trim(),
       category: String(data.get('category') ?? CATEGORIES[0]),
@@ -473,19 +491,20 @@ async function handleTicketCreate(form: HTMLFormElement) {
 
 async function handleInvite(form: HTMLFormElement) {
   const data = new FormData(form);
-  const invite = httpsCallable<
-    { email: string; name: string; department: string; role: Role },
-    { email: string; passwordSetupLink: string }
-  >(functions, 'inviteUser');
+  if (!currentUser) return;
   setBusy(true);
   try {
-    const result = await invite({
+    const idToken = await currentUser.getIdToken();
+    const result = await postVercelApi('/api/invite-user', {
       email: String(data.get('email') ?? '').trim(),
       name: String(data.get('name') ?? '').trim(),
       department: String(data.get('department') ?? '').trim(),
       role: String(data.get('role') ?? 'user') as Role,
-    });
-    renderInviteLink(result.data.email, result.data.passwordSetupLink);
+    }, idToken);
+    if (typeof result.email !== 'string' || typeof result.passwordSetupLink !== 'string') {
+      throw new Error('El servicio no devolvió un enlace válido.');
+    }
+    renderInviteLink(result.email, result.passwordSetupLink);
     await loadUsers();
   } catch (error) {
     showToast(errorText(error));
@@ -665,17 +684,33 @@ onAuthStateChanged(auth, async (user) => {
     users = [];
     reports = [];
     reportsLoadError = '';
-    renderPublicRoute();
+    companyName = '';
+    if (pendingLoginMessage) {
+      const message = pendingLoginMessage;
+      pendingLoginMessage = '';
+      renderLogin(message);
+    } else {
+      renderPublicRoute();
+    }
     return;
   }
 
   root!.innerHTML = '<main class="loading"><span class="spinner"></span><p>Verificando acceso…</p></main>';
   try {
     profile = await loadProfile(user);
+    if (loginCompanyId && loginCompanyId !== profile.companyId) {
+      loginCompanyId = '';
+      pendingLoginMessage = 'El ID de empresa no coincide con la cuenta.';
+      await signOut(auth);
+      return;
+    }
+    loginCompanyId = '';
+    await loadCompany();
     await loadTickets();
     if (isStaff()) await loadUsers();
     await renderCurrentRoute();
   } catch (error) {
+    loginCompanyId = '';
     await signOut(auth);
     renderLogin(errorText(error));
   }

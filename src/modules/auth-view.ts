@@ -11,6 +11,7 @@ export function renderLoginView(configurationError: string, message: string) {
         ${configurationError ? `<div class="notice error">${escapeHtml(configurationError)}</div>` : ''}
         ${message ? `<div class="notice error" role="alert">${escapeHtml(message)}</div>` : ''}
         <form id="login-form" class="form-stack">
+          <label>ID de empresa<input name="companyId" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="off" required></label>
           <label>Correo electrónico<input name="email" type="email" autocomplete="username" required maxlength="254"></label>
           <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
           <button class="button primary wide" type="submit" ${configurationError ? 'disabled' : ''}>Iniciar sesión</button>

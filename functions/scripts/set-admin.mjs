@@ -7,13 +7,18 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const email = process.argv[2]?.trim().toLowerCase();
 const requestedName = process.argv[3]?.trim();
-if (!email) {
-  console.error('Uso: npm run set-admin -- correo@empresa.com "Nombre del administrador"');
+const companyId = process.argv[4]?.trim();
+if (!email || !/^\d{10}$/.test(companyId ?? '')) {
+  console.error('Uso: npm run set-admin -- correo@empresa.com "Nombre del administrador" id-de-empresa');
   process.exitCode = 1;
 } else {
   initializeApp({ credential: applicationDefault() });
   const auth = getAuth();
   const db = getFirestore();
+  const companySnapshot = await db.doc(`companies/${companyId}`).get();
+  if (!companySnapshot.exists || companySnapshot.get('active') !== true) {
+    throw new Error('El ID de empresa no existe o no está activo.');
+  }
   let user;
   let created = false;
 
@@ -31,6 +36,13 @@ if (!email) {
   }
 
   const name = requestedName || user.displayName || email.split('@')[0];
+  const profileRef = db.doc(`users/${user.uid}`);
+  const existingProfile = await profileRef.get();
+  if (existingProfile.exists
+    && existingProfile.get('companyId')
+    && existingProfile.get('companyId') !== companyId) {
+    throw new Error('El usuario ya pertenece a otra empresa; usa la migración administrativa correspondiente.');
+  }
   try {
     const passwordSetupLink = await auth.generatePasswordResetLink(email);
     const passwordSetupPath = resolve('secrets/admin-password-setup-link.txt');
@@ -39,9 +51,10 @@ if (!email) {
 
     await auth.updateUser(user.uid, { displayName: name });
     const currentClaims = user.customClaims ?? {};
-    await auth.setCustomUserClaims(user.uid, { ...currentClaims, role: 'admin', active: true });
-    await db.doc(`users/${user.uid}`).set({
+    await auth.setCustomUserClaims(user.uid, { ...currentClaims, role: 'admin', active: true, companyId });
+    await profileRef.set({
       uid: user.uid,
+      companyId,
       name,
       email,
       department: '',

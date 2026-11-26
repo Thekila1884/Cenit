@@ -3,7 +3,7 @@ const rateLimitWindowMs = 60_000;
 
 export function isSameOrigin(request) {
   const origin = request.headers.origin;
-  if (!origin) return true;
+  if (!origin) return false;
 
   try {
     return new URL(origin).host === request.headers.host;

@@ -8,7 +8,16 @@ service cloud.firestore {
     function activeUser() {
       return signedIn()
         && request.auth.token.active == true
-        && request.auth.token.role in ['admin', 'agent', 'user'];
+        && request.auth.token.role in ['admin', 'agent', 'user']
+        && request.auth.token.companyId is string
+        && request.auth.token.companyId.matches('^[0-9]{10}$')
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == request.auth.token.role
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId
+          == request.auth.token.companyId
+        && exists(/databases/$(database)/documents/companies/$(request.auth.token.companyId))
+        && get(/databases/$(database)/documents/companies/$(request.auth.token.companyId)).data.active == true;
     }
 
     function staff() {
@@ -19,18 +28,33 @@ service cloud.firestore {
       return activeUser() && request.auth.token.role == 'admin';
     }
 
+    function tenantMember(companyId) {
+      return activeUser()
+        && companyId is string
+        && request.auth.token.companyId == companyId
+        && exists(/databases/$(database)/documents/companies/$(companyId))
+        && get(/databases/$(database)/documents/companies/$(companyId)).data.active == true;
+    }
+
+    function tenantStaff(companyId) {
+      return staff() && tenantMember(companyId);
+    }
+
     function validTicket() {
       return request.resource.data.keys().hasOnly([
-          'title', 'description', 'category', 'priority', 'status',
+          'companyId', 'title', 'description', 'category', 'priority', 'status',
           'createdBy', 'createdByName', 'assignedTo', 'createdAt',
           'dueDate', 'updatedAt', 'closedAt'
         ])
+        && request.resource.data.companyId == request.auth.token.companyId
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 120
         && request.resource.data.description is string
         && request.resource.data.description.size() <= 4000
         && request.resource.data.createdBy == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId
+          == request.auth.token.companyId
         && request.resource.data.createdByName
           == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
         && request.resource.data.assignedTo == null
@@ -51,18 +75,28 @@ service cloud.firestore {
       return request.resource.data.assignedTo == null
         || (exists(/databases/$(database)/documents/users/$(request.resource.data.assignedTo))
           && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.active == true
-          && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.role in ['admin', 'agent']);
+          && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.role in ['admin', 'agent']
+          && get(/databases/$(database)/documents/users/$(request.resource.data.assignedTo)).data.companyId
+            == request.auth.token.companyId);
+    }
+
+    match /companies/{companyId} {
+      allow get: if tenantMember(companyId);
+      allow list, create, update, delete: if false;
     }
 
     match /users/{userId} {
-      allow read: if activeUser() && (request.auth.uid == userId || staff());
+      allow read: if tenantMember(resource.data.companyId)
+        && (request.auth.uid == userId || staff());
       allow write: if false;
     }
 
     match /tickets/{ticketId} {
-      allow read: if staff() || (activeUser() && resource.data.createdBy == request.auth.uid);
-      allow create: if activeUser() && validTicket();
-      allow update: if staff()
+      allow read: if tenantStaff(resource.data.companyId)
+        || (tenantMember(resource.data.companyId) && resource.data.createdBy == request.auth.uid);
+      allow create: if tenantMember(request.resource.data.companyId) && validTicket();
+      allow update: if tenantStaff(resource.data.companyId)
+        && request.resource.data.companyId == resource.data.companyId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'priority', 'assignedTo', 'updatedAt', 'closedAt'
         ])
@@ -76,13 +110,15 @@ service cloud.firestore {
         && request.resource.data.status in ['abierto', 'progreso', 'revision', 'resuelto']
         && request.resource.data.priority in ['baja', 'media', 'alta', 'critica']
         && validAssignee();
-      allow delete: if administrator();
+      allow delete: if administrator() && resource.data.companyId == request.auth.token.companyId;
 
       match /comments/{commentId} {
         function canReadParent() {
-          return staff()
-            || (activeUser()
-              && get(/databases/$(database)/documents/tickets/$(ticketId)).data.createdBy == request.auth.uid);
+          return activeUser()
+            && get(/databases/$(database)/documents/tickets/$(ticketId)).data.companyId
+              == request.auth.token.companyId
+            && (staff()
+              || get(/databases/$(database)/documents/tickets/$(ticketId)).data.createdBy == request.auth.uid);
         }
 
         allow read: if canReadParent();
@@ -100,8 +136,10 @@ service cloud.firestore {
     }
 
     match /errorReports/{reportId} {
-      allow read: if administrator();
+      allow read: if administrator() && resource.data.companyId == request.auth.token.companyId;
       allow update: if administrator()
+        && resource.data.companyId == request.auth.token.companyId
+        && request.resource.data.companyId == resource.data.companyId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reviewStatus'])
         && request.resource.data.reviewStatus in ['pending', 'reviewed'];
       allow create, delete: if false;

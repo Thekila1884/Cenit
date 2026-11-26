@@ -7,20 +7,20 @@ Base de la aplicación multiusuario de Cenit. La maqueta anterior se conserva en
 - Vite + TypeScript para la aplicación web.
 - Firebase Authentication para inicio de sesión con correo y contraseña.
 - Cloud Firestore para perfiles, tickets y comentarios.
-- Cloud Functions para invitaciones administrativas, almacenamiento de reportes de error, actualización segura de su estado de correo y asignación confiable de roles.
-- Rutas serverless de Vercel para enviar correos de soporte y solicitudes comerciales con Resend.
+- Rutas serverless de Vercel con Firebase Admin SDK para invitaciones y reportes; Resend envía correos de soporte y ventas.
+- Un `companyId` de 10 dígitos en perfiles, tickets y reportes. Los custom claims y reglas de Firestore aíslan cada empresa.
 - Las reglas de Firestore son la autoridad de acceso; ocultar acciones en la interfaz no constituye autorización.
 
-Los roles son `user` (solicitante), `agent` y `admin`. No hay registro público. El primer administrador se prepara desde una cuenta creada en Firebase Authentication mediante `scripts/set-admin.mjs`.
+Los roles son `user` (solicitante), `agent` y `admin`. No hay registro público. La empresa se asigna al perfil y a los custom claims; el ID escrito en el login debe coincidir con esa asignación.
 
 La navegación usa rutas con enlaces directos: `#/tickets/mine`, `#/tickets/all`, `#/admin/users` y `#/admin/reports`. Las vistas de acceso, tickets, usuarios, reportes y rutas están separadas en `src/modules/`.
 
 ## Desarrollo local
 
-Requiere Node.js 22 para el runtime de Cloud Functions.
+Requiere Node.js 22.
 
-1. Crea un proyecto Firebase y habilita Authentication con proveedor de correo/contraseña, Firestore y Cloud Functions.
-2. Copia `.env.example` a `.env` y completa los cuatro valores de configuración web desde la consola del proyecto. Las variables `RESEND_API_KEY` y `RESEND_FROM_EMAIL` son solo para las rutas de correo del servidor; nunca uses el prefijo `VITE_` para ellas.
+1. Crea un proyecto Firebase y habilita Authentication con proveedor de correo/contraseña y Firestore.
+2. Copia `.env.example` a `.env` y completa los valores de configuración web. Configura localmente `GOOGLE_APPLICATION_CREDENTIALS` para que apunte al archivo de cuenta de servicio ignorado por Git.
 3. Instala y ejecuta:
 
    ```sh
@@ -28,23 +28,36 @@ Requiere Node.js 22 para el runtime de Cloud Functions.
    npm run dev
    ```
 
-4. Instala las dependencias de Functions y descarga una clave de cuenta de servicio desde la configuración del proyecto Firebase. Guárdala localmente en `secrets/firebase-admin-service-account.json`; no la compartas ni la subas al repositorio. La variable `GOOGLE_APPLICATION_CREDENTIALS` de `.env` apunta a ese archivo.
-5. Crea o promueve el primer administrador:
+4. Descarga una cuenta de servicio desde Firebase y guárdala localmente en `secrets/firebase-admin-service-account.json`; no la compartas ni la subas al repositorio.
+5. Inicializa o migra la empresa existente:
 
    ```sh
-   cd functions && npm install && cd ..
-   npm run set-admin -- admin@empresa.com "Nombre del administrador"
+   npm run bootstrap-company -- "Vendors, S.A."
    ```
 
-   Si la cuenta todavía no existe, el script la crea con una contraseña aleatoria y guarda el enlace de configuración en `secrets/admin-password-setup-link.txt`. La cuenta debe volver a iniciar sesión para que Firebase renueve los claims.
+   El script asigna un ID aleatorio único de 10 dígitos, agrega `companyId` a los perfiles/tickets/reportes actuales y actualiza los custom claims. El ID se muestra en **Usuarios** para que se lo compartas al equipo.
+
+6. Despliega las reglas e índices:
+
+   ```sh
+   firebase deploy --only firestore:rules,firestore:indexes
+   ```
+
+Para registrar otra empresa y su primer administrador, usa el script local con cuenta de servicio. Genera un ID de 10 dígitos único, crea la empresa y guarda el enlace de configuración de contraseña en `secrets/`:
+
+```sh
+npm run create-company-admin -- "Nombre de empresa" admin@empresa.com "Nombre del administrador"
+```
+
+Los administradores creados desde **Usuarios** solo pueden invitar personas a su propia empresa.
 
 ## Invitaciones
 
-Desde **Usuarios**, un administrador puede crear perfiles e invitar solicitantes o agentes. La función asigna el rol en custom claims y genera un enlace de restablecimiento para que el usuario establezca su contraseña. En esta primera versión el enlace se muestra al administrador para copiarlo y compartirlo por un canal corporativo seguro; el correo automático de invitaciones no está habilitado.
+Desde **Usuarios**, un administrador puede invitar personas únicamente a su propia empresa. La ruta de Vercel valida el token de Firebase, rol y `companyId`, asigna custom claims y genera un enlace para configurar la contraseña. El enlace se muestra al administrador para compartirlo por un canal corporativo seguro.
 
 ## Reportar errores
 
-El botón **Reportar error** está disponible en el inicio de sesión y dentro del sistema. Los reportes se guardan en `errorReports` mediante Cloud Functions y su correo se envía desde una ruta de Vercel con Resend a `soporte@vendedores.site`; los administradores pueden revisarlos en **Reportes**. El formulario envía la descripción, la pantalla y el correo de contacto (si se proporciona), pero no contraseñas. Firebase limita la creación de reportes y la ruta de Vercel aplica una limitación básica por instancia.
+El botón **Reportar error** está disponible en el inicio de sesión y dentro del sistema. Una ruta de Vercel valida la empresa y, si hay sesión, el token; guarda el reporte con su `companyId` y envía el correo con Resend a `soporte@vendedores.site`. Los administradores solo pueden revisar reportes de su propia empresa. No se envían contraseñas.
 
 En cada plan, **Contactar con ventas** abre un formulario con el plan seleccionado. Nombre y correo son obligatorios; empresa, teléfono y mensaje son opcionales. La solicitud se envía a `soporte@vendedores.site` desde una ruta de Vercel mediante Resend y no realiza cobros ni crea una compra automáticamente.
 
@@ -52,30 +65,31 @@ Configura estas variables en **Vercel → Project Settings → Environment Varia
 
 - `RESEND_API_KEY`: clave privada de Resend.
 - `RESEND_FROM_EMAIL` (opcional): remitente verificado; por defecto es `Cenit <soporte@vendedores.site>`.
+- `FIREBASE_SERVICE_ACCOUNT_JSON`: contenido JSON de una cuenta de servicio de Firebase con acceso a Authentication y Firestore. Es un secreto de servidor: no uses prefijo `VITE_`, no lo pongas en archivos versionados y no lo compartas en chats.
 
-Verifica el dominio del remitente en Resend antes de enviar correos. Estas credenciales no se configuran en Firebase ni se exponen al navegador. Para probar las rutas localmente, usa Vercel CLI (`vercel dev`); `npm run dev` inicia solo Vite y no ejecuta `/api`.
+Verifica el dominio del remitente en Resend antes de enviar correos. Ninguna de estas credenciales se expone al navegador. Para probar las rutas localmente, usa Vercel CLI (`vercel dev`); `npm run dev` inicia solo Vite y no ejecuta `/api`.
 
-App Check queda aplazado por ahora. Las acciones administrativas validan sesión y rol en el servidor; la creación de reportes tiene límite por dirección IP en Firestore y las rutas de correo tienen un límite básico en memoria por instancia serverless, no distribuido. Nunca se aceptan roles enviados desde el cliente como fuente de autoridad.
+Las rutas de Vercel tienen límites básicos por instancia serverless; no son límites distribuidos. Las acciones administrativas validan sesión, rol y empresa en el servidor. Nunca se aceptan roles o empresas enviados por el cliente como fuente de autoridad.
 
 ## Despliegue
 
-Instala Firebase CLI, inicia sesión y selecciona el proyecto para desplegar las reglas y funciones:
+Instala Firebase CLI, inicia sesión y selecciona el proyecto para desplegar las reglas e índices:
 
 ```sh
 firebase login
 firebase use --add
 npm run build
-cd functions && npm install && npm run build && cd ..
-firebase deploy
+firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-En Vercel, configura las variables de Resend indicadas arriba y despliega la aplicación. Configura los dominios autorizados de Authentication antes de habilitar usuarios.
+En Vercel, configura las variables de Resend y Firebase Admin indicadas arriba y despliega la aplicación. Configura los dominios autorizados de Authentication antes de habilitar usuarios. Este despliegue no requiere Cloud Functions ni el plan Blaze.
 
 ## Datos
 
-- `users/{uid}`: perfil de usuario. La escritura desde el cliente está bloqueada.
-- `tickets/{ticketId}`: solicitud y estado operativo.
+- `companies/{companyId}`: empresa; lectura limitada a usuarios activos de ese tenant.
+- `users/{uid}`: perfil de usuario con `companyId`. La escritura desde el cliente está bloqueada.
+- `tickets/{ticketId}`: solicitud y estado operativo, siempre asociada a un `companyId`.
 - `tickets/{ticketId}/comments/{commentId}`: actividad escrita como comentarios inmutables.
-- `errorReports/{reportId}`: reportes enviados al soporte; solo administradores pueden leerlos y cambiar su estado de revisión. La actualización del estado del correo se autoriza con un token de un solo uso, no con permisos del cliente.
+- `errorReports/{reportId}`: reportes enviados al soporte, con lectura y revisión limitadas a administradores de la empresa asociada.
 
-Las reglas dan acceso a los solicitantes solo a tickets propios y a los roles de soporte acceso operativo. La maqueta HTML independiente usa `localStorage` y sus datos no se importan automáticamente a Firestore.
+Las reglas dan acceso a los solicitantes solo a tickets propios y a los roles de soporte acceso operativo dentro de su empresa. La maqueta HTML independiente usa `localStorage` y sus datos no se importan automáticamente a Firestore.
