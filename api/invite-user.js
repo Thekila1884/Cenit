@@ -28,11 +28,19 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'Verifica nombre, correo, departamento y rol.' });
   }
 
+  const requestId = typeof request.headers['x-vercel-id'] === 'string'
+    ? request.headers['x-vercel-id']
+    : 'unavailable';
+  const logProgress = (event) => console.info('Vercel invite-user progress', { requestId, event });
+  logProgress('request-accepted');
+
   let failureStage = 'firebase-admin';
   try {
     const { auth, db, FieldValue } = await getFirebaseAdmin();
+    logProgress('firebase-admin-ready');
     failureStage = 'authenticate-inviter';
     const inviter = await requireTenantUser(request, auth, db);
+    logProgress('inviter-authenticated');
     if (inviter.role !== 'admin') throw new HttpError(403, 'Solo un administrador puede invitar usuarios.');
 
     failureStage = 'check-company';
@@ -43,6 +51,7 @@ export default async function handler(request, response) {
     const companyName = typeof companySnapshot.get('name') === 'string'
       ? companySnapshot.get('name')
       : inviter.companyId;
+    logProgress('company-verified');
 
     let uid;
     try {
@@ -54,9 +63,11 @@ export default async function handler(request, response) {
         disabled: false,
       });
       uid = user.uid;
+      logProgress('account-created');
 
       failureStage = 'assign-claims';
       await auth.setCustomUserClaims(uid, { role, active: true, companyId: inviter.companyId });
+      logProgress('claims-assigned');
       failureStage = 'save-profile';
       await db.doc(`users/${uid}`).set({
         uid,
@@ -68,9 +79,11 @@ export default async function handler(request, response) {
         companyId: inviter.companyId,
         createdAt: FieldValue.serverTimestamp(),
       });
+      logProgress('profile-saved');
 
       failureStage = 'generate-password-link';
       const passwordSetupLink = await auth.generatePasswordResetLink(email);
+      logProgress('password-link-created');
       const loginUrl = new URL('/#/login', request.headers.origin).toString();
       failureStage = 'send-invitation-email';
       await sendEmail(
@@ -89,15 +102,18 @@ export default async function handler(request, response) {
           'Si no esperabas esta invitación, puedes ignorar este mensaje.',
         ].join('\n'),
       );
+      logProgress('invitation-email-sent');
       return response.status(201).json({ email, sent: true });
     } catch (error) {
       const failedAt = failureStage;
       if (uid) {
         failureStage = 'rollback-invitation';
+        logProgress('rollback-started');
         await Promise.all([
           auth.deleteUser(uid),
           db.doc(`users/${uid}`).delete(),
         ]);
+        logProgress('rollback-completed');
       }
       failureStage = failedAt;
       const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : '';
@@ -107,9 +123,21 @@ export default async function handler(request, response) {
       throw error;
     }
   } catch (error) {
-    if (error instanceof HttpError) return response.status(error.status).json({ error: error.message });
+    if (error instanceof HttpError) {
+      console.warn('Vercel invite-user request rejected', {
+        requestId,
+        stage: failureStage,
+        status: error.status,
+      });
+      return response.status(error.status).json({ error: error.message });
+    }
     console.error('Vercel invite-user request failed', {
+      requestId,
       stage: failureStage,
+      errorCode: typeof error === 'object' && error !== null && 'code' in error
+        && typeof error.code === 'string'
+        ? error.code
+        : 'unknown',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
     return response.status(503).json({
