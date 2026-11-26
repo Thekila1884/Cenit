@@ -1,6 +1,9 @@
+import { SALES_PLANS } from './sales-view';
+
 const plans = [
   {
-    name: 'Básico',
+    id: 'basico',
+    name: SALES_PLANS.basico,
     users: '1–3 usuarios',
     price: '$25',
     description: 'El orden esencial para comenzar a atender solicitudes.',
@@ -11,7 +14,8 @@ const plans = [
     ],
   },
   {
-    name: 'Profesional',
+    id: 'profesional',
+    name: SALES_PLANS.profesional,
     users: '5–10 usuarios',
     price: '$50',
     description: 'Coordinación clara para equipos de soporte en crecimiento.',
@@ -23,7 +27,8 @@ const plans = [
     ],
   },
   {
-    name: 'Empresarial',
+    id: 'empresarial',
+    name: SALES_PLANS.empresarial,
     users: '20 usuarios o más',
     price: '$100',
     description: 'Control de acceso y seguimiento para equipos amplios.',
@@ -90,7 +95,10 @@ export function renderHomeView() {
               <p class="plan-description">${plan.description}</p>
               <div class="plan-price"><strong>${plan.price}</strong><span>/ mes</span></div>
               <ul>${plan.features.map((feature) => `<li><span>✓</span>${feature}</li>`).join('')}</ul>
-              <a class="plan-link" href="#/login">Acceso para clientes <span>→</span></a>
+              <div class="plan-actions">
+                <a class="plan-link" href="#/login">Acceso para clientes <span>→</span></a>
+                <button class="button secondary" type="button" data-action="contact-sales" data-plan="${plan.id}">Contactar con ventas</button>
+              </div>
             </article>`).join('')}</div>
           <p class="plans-note">Los planes se presentan con fines informativos. La contratación y la puesta en marcha se coordinan con Vendors, S.A.</p>
         </section>
@@ -101,5 +109,7 @@ export function renderHomeView() {
         </section>
       </main>
       <footer class="landing-footer" id="empresa"><a class="brand landing-brand" href="#/home"><span class="brand-mark">C</span><span>Cenit</span></a><span>Gestión de soporte para equipos.</span><strong>By Vendors, S.A.</strong></footer>
-    </div>`;
+    </div>
+    <dialog id="modal" class="modal"></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>`;
 }

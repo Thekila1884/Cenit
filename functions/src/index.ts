@@ -16,9 +16,9 @@ const reportRecipient = 'soporte@vendedores.site';
 const roles = ['admin', 'agent', 'user'] as const;
 type Role = (typeof roles)[number];
 
-async function applyErrorReportRateLimit(ipAddress: string) {
+async function applyRateLimit(collectionName: string, ipAddress: string) {
   const key = createHash('sha256').update(ipAddress).digest('hex');
-  const rateLimitRef = db.doc(`errorReportRateLimits/${key}`);
+  const rateLimitRef = db.doc(`${collectionName}/${key}`);
   const now = Date.now();
 
   await db.runTransaction(async (transaction) => {
@@ -29,6 +29,25 @@ async function applyErrorReportRateLimit(ipAddress: string) {
     }
     transaction.set(rateLimitRef, { lastAttemptAt: FieldValue.serverTimestamp() });
   });
+}
+
+async function sendSupportEmail(subject: string, text: string, replyTo?: string) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey.value()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: resendFromEmail.value(),
+      to: [reportRecipient],
+      subject,
+      text,
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Resend respondió con el estado ${response.status}.`);
 }
 
 export const inviteUser = onCall(async (request) => {
@@ -98,7 +117,7 @@ export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (requ
     throw new HttpsError('invalid-argument', 'Verifica el correo de contacto.');
   }
 
-  await applyErrorReportRateLimit(request.rawRequest.ip || 'unknown');
+  await applyRateLimit('errorReportRateLimits', request.rawRequest.ip || 'unknown');
 
   const reportRef = db.collection('errorReports').doc();
   await reportRef.set({
@@ -113,31 +132,20 @@ export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (requ
 
   let emailSent = false;
   try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resendApiKey.value()}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: resendFromEmail.value(),
-        to: [reportRecipient],
-        subject: 'Nuevo reporte de error en Cenit',
-        text: [
-          'Se recibió un nuevo reporte de error en Cenit.',
-          '',
-          `Reporte: ${reportRef.id}`,
-          `Correo de contacto: ${reporterEmail ?? 'No indicado'}`,
-          `UID: ${request.auth?.uid ?? 'No autenticado'}`,
-          `Pantalla: ${route || 'No especificada'}`,
-          '',
-          'Descripción:',
-          description,
-        ].join('\n'),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`Resend respondió con el estado ${response.status}.`);
+    await sendSupportEmail(
+      'Nuevo reporte de error en Cenit',
+      [
+        'Se recibió un nuevo reporte de error en Cenit.',
+        '',
+        `Reporte: ${reportRef.id}`,
+        `Correo de contacto: ${reporterEmail ?? 'No indicado'}`,
+        `UID: ${request.auth?.uid ?? 'No autenticado'}`,
+        `Pantalla: ${route || 'No especificada'}`,
+        '',
+        'Descripción:',
+        description,
+      ].join('\n'),
+    );
     await reportRef.update({ emailStatus: 'sent' });
     emailSent = true;
   } catch (error) {
@@ -149,4 +157,57 @@ export const submitErrorReport = onCall({ secrets: [resendApiKey] }, async (requ
   }
 
   return { reportId: reportRef.id, emailSent };
+});
+
+export const contactSales = onCall({ secrets: [resendApiKey] }, async (request) => {
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
+  const company = typeof request.data?.company === 'string' ? request.data.company.trim() : '';
+  const email = typeof request.data?.email === 'string' ? request.data.email.trim().toLowerCase() : '';
+  const phone = typeof request.data?.phone === 'string' ? request.data.phone.trim() : '';
+  const message = typeof request.data?.message === 'string' ? request.data.message.trim() : '';
+  const planNames: Record<string, string> = {
+    basico: 'Básico',
+    profesional: 'Profesional',
+    empresarial: 'Empresarial',
+  };
+  const planId = typeof request.data?.plan === 'string' ? request.data.plan : '';
+  const planName = Object.hasOwn(planNames, planId) ? planNames[planId] : undefined;
+
+  if (!name || name.length > 120 || !planName) {
+    throw new HttpsError('invalid-argument', 'Verifica tu nombre y el plan seleccionado.');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    throw new HttpsError('invalid-argument', 'Verifica el correo electrónico.');
+  }
+  if (company.length > 120 || phone.length > 40 || message.length > 2000) {
+    throw new HttpsError('invalid-argument', 'Verifica los datos ingresados.');
+  }
+
+  await applyRateLimit('salesContactRateLimits', request.rawRequest.ip || 'unknown');
+
+  try {
+    await sendSupportEmail(
+      `Solicitud comercial de Cenit: plan ${planName}`,
+      [
+        'Nueva solicitud de contacto comercial desde Cenit.',
+        '',
+        `Plan seleccionado: ${planName}`,
+        `Nombre: ${name}`,
+        `Empresa: ${company || 'No indicada'}`,
+        `Correo: ${email}`,
+        `Teléfono: ${phone || 'No indicado'}`,
+        '',
+        'Mensaje:',
+        message || 'Sin mensaje adicional.',
+      ].join('\n'),
+      email,
+    );
+    return { sent: true };
+  } catch (error) {
+    console.error('Failed to send Cenit sales contact email', {
+      planId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    throw new HttpsError('unavailable', 'No se pudo enviar la solicitud ahora. Inténtalo más tarde.');
+  }
 });

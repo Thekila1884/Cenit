@@ -7,7 +7,7 @@ Base de la aplicación multiusuario de Cenit. La maqueta anterior se conserva en
 - Vite + TypeScript para la aplicación web.
 - Firebase Authentication para inicio de sesión con correo y contraseña.
 - Cloud Firestore para perfiles, tickets y comentarios.
-- Cloud Functions para invitaciones administrativas, reportes de error por correo y asignación confiable de roles.
+- Cloud Functions para invitaciones administrativas, reportes de error, consultas comerciales y asignación confiable de roles.
 - Las reglas de Firestore son la autoridad de acceso; ocultar acciones en la interfaz no constituye autorización.
 
 Los roles son `user` (solicitante), `agent` y `admin`. No hay registro público. El primer administrador se prepara desde una cuenta creada en Firebase Authentication mediante `scripts/set-admin.mjs`.
@@ -45,6 +45,8 @@ Desde **Usuarios**, un administrador puede crear perfiles e invitar solicitantes
 
 El botón **Reportar error** está disponible en el inicio de sesión y dentro del sistema. Los reportes se guardan en `errorReports` y se envían automáticamente con Resend a `soporte@vendedores.site`; los administradores pueden revisarlos en **Reportes**. El formulario envía la descripción, la pantalla y el correo de contacto (si se proporciona), pero no contraseñas. Los envíos tienen un límite básico por dirección IP.
 
+En cada plan, **Contactar con ventas** abre un formulario con el plan seleccionado. Nombre y correo son obligatorios; empresa, teléfono y mensaje son opcionales. La solicitud se envía a `soporte@vendedores.site` mediante Resend y no realiza cobros ni crea una compra automáticamente.
+
 Antes de desplegar Functions, configura la clave de Resend como secreto:
 
 ```sh
@@ -53,7 +55,7 @@ firebase functions:secrets:set RESEND_API_KEY
 
 El remitente predeterminado es `Cenit <soporte@vendedores.site>`. Verifica ese dominio en Resend antes de enviar correos; si usas otro remitente, define `RESEND_FROM_EMAIL` para el proyecto en el entorno de Functions.
 
-App Check queda aplazado por ahora. La función valida sesión y rol de administrador en el servidor; antes de una publicación pública, conviene activar App Check y su enforcement. Nunca se aceptan roles enviados desde el cliente como fuente de autoridad.
+App Check queda aplazado por ahora. Las acciones administrativas validan sesión y rol en el servidor; los formularios públicos de errores y ventas tienen límites por dirección IP. Antes de una publicación pública, conviene activar App Check y su enforcement. Nunca se aceptan roles enviados desde el cliente como fuente de autoridad.
 
 ## Despliegue
 

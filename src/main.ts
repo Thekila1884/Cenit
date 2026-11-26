@@ -19,6 +19,7 @@ import { escapeHtml } from './modules/escape-html';
 import { renderHomeView } from './modules/home-view';
 import { renderErrorReportDialog, renderReports } from './modules/reports-view';
 import { routeFromHash, routeHref, type AuthenticatedRoute } from './modules/router';
+import { isSalesPlanId, renderSalesContactDialog, type SalesPlanId } from './modules/sales-view';
 import { renderNewTicketDialog, renderTicketDetailDialog, renderTicketRows } from './modules/ticket-view';
 import { renderInviteDialog, renderInviteLink as renderInviteLinkView, renderUsersTable } from './modules/users-view';
 import {
@@ -75,7 +76,8 @@ function errorText(error: unknown): string {
     'functions/failed-precondition': 'La invitación no pudo completarse. Verifica la configuración de Firebase.',
     'functions/permission-denied': 'No tienes permiso para realizar esta acción.',
     'functions/unauthenticated': 'Tu sesión venció. Inicia sesión nuevamente.',
-    'functions/resource-exhausted': 'Espera un minuto antes de enviar otro reporte.',
+    'functions/resource-exhausted': 'Espera un minuto antes de enviar otra solicitud.',
+    'functions/unavailable': 'No se pudo enviar la solicitud ahora. Inténtalo más tarde.',
     'functions/already-exists': 'Ya existe una cuenta con ese correo.',
     'functions/invalid-argument': 'Verifica los datos ingresados.',
   };
@@ -285,6 +287,13 @@ function renderErrorReport() {
   dialog.showModal();
 }
 
+function renderSalesContact(plan: SalesPlanId) {
+  const dialog = root!.querySelector<HTMLDialogElement>('#modal');
+  if (!dialog) return;
+  dialog.innerHTML = renderSalesContactDialog(plan);
+  dialog.showModal();
+}
+
 function renderInviteLink(email: string, link: string) {
   const dialog = root!.querySelector<HTMLDialogElement>('#modal')!;
   dialog.innerHTML = renderInviteLinkView(email, link);
@@ -334,6 +343,40 @@ async function handleErrorReport(form: HTMLFormElement) {
       renderApp();
     }
     showToast(message);
+  } catch (error) {
+    showToast(errorText(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleSalesContact(form: HTMLFormElement) {
+  const data = new FormData(form);
+  const plan = String(data.get('plan') ?? '');
+  if (!isSalesPlanId(plan)) return showToast('Selecciona uno de los planes disponibles.');
+  const contactSales = httpsCallable<
+    {
+      name: string;
+      company: string;
+      email: string;
+      phone: string;
+      message: string;
+      plan: SalesPlanId;
+    },
+    { sent: boolean }
+  >(functions, 'contactSales');
+  setBusy(true);
+  try {
+    await contactSales({
+      name: String(data.get('name') ?? '').trim(),
+      company: String(data.get('company') ?? '').trim(),
+      email: String(data.get('email') ?? '').trim(),
+      phone: String(data.get('phone') ?? '').trim(),
+      message: String(data.get('message') ?? '').trim(),
+      plan,
+    });
+    root!.querySelector<HTMLDialogElement>('#modal')?.close();
+    showToast('Solicitud enviada a ventas. Nos pondremos en contacto contigo.');
   } catch (error) {
     showToast(errorText(error));
   } finally {
@@ -471,6 +514,7 @@ root.addEventListener('submit', (event) => {
   event.preventDefault();
   if (form.id === 'login-form') void handleLogin(form);
   if (form.id === 'error-report-form') void handleErrorReport(form);
+  if (form.id === 'sales-contact-form') void handleSalesContact(form);
   if (form.id === 'ticket-form') void handleTicketCreate(form);
   if (form.id === 'invite-form') void handleInvite(form);
   if (form.id === 'comment-form') void handleComment(form);
@@ -518,6 +562,10 @@ root.addEventListener('click', async (event) => {
     }
   } else if (action === 'report-error') {
     renderErrorReport();
+  } else if (action === 'contact-sales') {
+    const plan = button.dataset.plan ?? '';
+    if (isSalesPlanId(plan)) renderSalesContact(plan);
+    else showToast('No se pudo identificar el plan seleccionado.');
   } else if (action === 'update-report-status') {
     await updateReportStatus(button);
   } else if (action === 'signout') {
