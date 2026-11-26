@@ -27,7 +27,11 @@ import {
   ticketCategoriesFromForm,
   ticketCategoriesToMap,
 } from './modules/ticket-settings';
-import { renderInviteDialog, renderInviteLink as renderInviteLinkView, renderUsersTable } from './modules/users-view';
+import {
+  renderInviteConfirmation as renderInviteConfirmationView,
+  renderInviteDialog,
+  renderUsersTable,
+} from './modules/users-view';
 import {
   DEFAULT_TICKET_CATEGORIES,
   STATUS_LABELS,
@@ -447,9 +451,9 @@ function updateTicketIssueOptions(typeSelect: HTMLSelectElement) {
   issueSelect.innerHTML = (type?.issues ?? []).map((issue) => `<option value="${escapeHtml(issue)}">${escapeHtml(issue)}</option>`).join('');
 }
 
-function renderInviteLink(email: string, link: string) {
+function renderInviteConfirmation(email: string) {
   const dialog = root!.querySelector<HTMLDialogElement>('#modal')!;
-  dialog.innerHTML = renderInviteLinkView(email, link);
+  dialog.innerHTML = renderInviteConfirmationView(email);
 }
 
 async function handleLogin(form: HTMLFormElement) {
@@ -623,10 +627,10 @@ async function handleInvite(form: HTMLFormElement) {
       department: String(data.get('department') ?? '').trim(),
       role: String(data.get('role') ?? 'user') as Role,
     }, idToken);
-    if (typeof result.email !== 'string' || typeof result.passwordSetupLink !== 'string') {
-      throw new Error('El servicio no devolvió un enlace válido.');
+    if (typeof result.email !== 'string' || result.sent !== true) {
+      throw new Error('El servicio no confirmó el envío de la invitación.');
     }
-    renderInviteLink(result.email, result.passwordSetupLink);
+    renderInviteConfirmation(result.email);
     await loadUsers();
   } catch (error) {
     showToast(errorText(error));
@@ -835,12 +839,6 @@ root.addEventListener('click', async (event) => {
     }
   } else if (action === 'close-modal') {
     root!.querySelector<HTMLDialogElement>('#modal')?.close();
-  } else if (action === 'copy-link') {
-    const input = root!.querySelector<HTMLTextAreaElement>('#invite-link');
-    if (input) {
-      await navigator.clipboard.writeText(input.value);
-      showToast('Enlace copiado.');
-    }
   }
 });
 

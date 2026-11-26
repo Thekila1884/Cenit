@@ -57,7 +57,7 @@ Los administradores creados desde **Usuarios** solo pueden invitar personas a su
 
 ## Invitaciones
 
-Desde **Usuarios**, un administrador puede invitar personas únicamente a su propia empresa. La ruta de Vercel valida el token de Firebase, rol y `companyId`, asigna custom claims y genera un enlace para configurar la contraseña. El enlace se muestra al administrador para compartirlo por un canal corporativo seguro.
+Desde **Usuarios**, un administrador puede invitar personas únicamente a su propia empresa. La ruta de Vercel valida el token de Firebase, rol y `companyId`, crea la cuenta y envía la invitación mediante Resend. El correo incluye un enlace de Firebase para configurar la contraseña, el ID de empresa y el acceso al login; el enlace no se muestra en la interfaz del administrador.
 
 ## Reportar errores
 

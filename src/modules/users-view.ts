@@ -11,7 +11,7 @@ export function renderInviteDialog(companyName: string, companyId: string) {
   return `
     <form id="invite-form" class="dialog-content">
       <div class="dialog-heading"><div><p class="eyebrow">ACCESO AL EQUIPO</p><h2>Invitar usuario</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
-      <p class="muted">Se creará la cuenta y recibirás un enlace para compartirlo con la persona invitada.</p>
+      <p class="muted">Se creará la cuenta y enviaremos a la persona un correo con un enlace seguro para configurar su contraseña.</p>
       <p class="notice">Empresa: <strong>${escapeHtml(companyName)}</strong> · Código ${escapeHtml(companyId)}</p>
       <label>Nombre completo<input name="name" maxlength="120" required></label>
       <label>Correo electrónico<input name="email" type="email" maxlength="254" required></label>
@@ -21,11 +21,10 @@ export function renderInviteDialog(companyName: string, companyId: string) {
     </form>`;
 }
 
-export function renderInviteLink(email: string, link: string) {
+export function renderInviteConfirmation(email: string) {
   return `
-    <div class="dialog-content"><div class="dialog-heading"><div><p class="eyebrow">INVITACIÓN CREADA</p><h2>Comparte el enlace</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
-      <p>La cuenta de <strong>${escapeHtml(email)}</strong> ya está creada. Comparte este enlace de configuración de contraseña por un canal corporativo seguro.</p>
-      <label>Enlace de un solo uso<textarea id="invite-link" rows="4" readonly>${escapeHtml(link)}</textarea></label>
-      <div class="dialog-actions"><button class="button secondary" type="button" data-action="copy-link">Copiar enlace</button><button class="button primary" type="button" data-action="close-modal">Listo</button></div>
+    <div class="dialog-content"><div class="dialog-heading"><div><p class="eyebrow">INVITACIÓN ENVIADA</p><h2>Correo enviado</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Cerrar">×</button></div>
+      <p>Enviamos a <strong>${escapeHtml(email)}</strong> un enlace para configurar su contraseña e iniciar sesión en Cenit.</p>
+      <div class="dialog-actions"><button class="button primary" type="button" data-action="close-modal">Listo</button></div>
     </div>`;
 }

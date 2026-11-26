@@ -1,7 +1,7 @@
 const recipient = 'soporte@vendedores.site';
 const defaultSender = 'Cenit <soporte@vendedores.site>';
 
-export async function sendSupportEmail(subject, text, replyTo) {
+export async function sendEmail(to, subject, text, replyTo) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) throw new Error('RESEND_API_KEY no está configurada en Vercel.');
 
@@ -13,7 +13,7 @@ export async function sendSupportEmail(subject, text, replyTo) {
     },
     body: JSON.stringify({
       from: process.env.RESEND_FROM_EMAIL || defaultSender,
-      to: [recipient],
+      to: [to],
       subject,
       text,
       ...(replyTo ? { reply_to: replyTo } : {}),
@@ -22,4 +22,8 @@ export async function sendSupportEmail(subject, text, replyTo) {
   });
 
   if (!response.ok) throw new Error(`Resend respondió con el estado ${response.status}.`);
+}
+
+export async function sendSupportEmail(subject, text, replyTo) {
+  return sendEmail(recipient, subject, text, replyTo);
 }

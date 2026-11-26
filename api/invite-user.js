@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getFirebaseAdmin } from '../server/firebase-admin.js';
 import { HttpError } from '../server/http-error.js';
 import { isRateLimited, isSameOrigin, isValidEmail } from '../server/request-guards.js';
+import { sendEmail } from '../server/resend.js';
 import { requireTenantUser } from '../server/tenant-auth.js';
 
 const roles = new Set(['admin', 'agent', 'user']);
@@ -37,6 +38,9 @@ export default async function handler(request, response) {
     if (!companySnapshot.exists || companySnapshot.get('active') !== true) {
       throw new HttpError(409, 'La empresa asociada no está configurada o activa.');
     }
+    const companyName = typeof companySnapshot.get('name') === 'string'
+      ? companySnapshot.get('name')
+      : inviter.companyId;
 
     let uid;
     try {
@@ -61,7 +65,24 @@ export default async function handler(request, response) {
       });
 
       const passwordSetupLink = await auth.generatePasswordResetLink(email);
-      return response.status(201).json({ email, passwordSetupLink });
+      const loginUrl = new URL('/#/login', request.headers.origin).toString();
+      await sendEmail(
+        email,
+        'Tu invitación para acceder a Cenit',
+        [
+          `Hola ${name},`,
+          '',
+          `Un administrador de ${companyName} te invitó a usar Cenit.`,
+          'Para activar tu acceso y establecer una contraseña, abre este enlace:',
+          passwordSetupLink,
+          '',
+          `ID de empresa: ${inviter.companyId}`,
+          `Después, inicia sesión en: ${loginUrl}`,
+          '',
+          'Si no esperabas esta invitación, puedes ignorar este mensaje.',
+        ].join('\n'),
+      );
+      return response.status(201).json({ email, sent: true });
     } catch (error) {
       if (uid) {
         await Promise.all([
