@@ -13,6 +13,7 @@ export function getFirebaseAdmin() {
 function firebaseAdminError(code, message, cause) {
   const error = new Error(message, { cause });
   error.diagnosticCode = code;
+  error.causeCode = typeof cause?.code === 'string' ? cause.code : 'unknown';
   return error;
 }
 
@@ -21,15 +22,29 @@ async function createFirebaseAdmin() {
   let authModule;
   let firestoreModule;
   try {
-    [appModule, authModule, firestoreModule] = await Promise.all([
-      import('firebase-admin/app'),
-      import('firebase-admin/auth'),
-      import('firebase-admin/firestore'),
-    ]);
+    appModule = await import('firebase-admin/app');
   } catch (error) {
     throw firebaseAdminError(
-      'firebase-admin-sdk-import-failed',
-      'No se pudieron cargar los módulos de Firebase Admin.',
+      'firebase-admin-app-import-failed',
+      'No se pudo cargar firebase-admin/app.',
+      error,
+    );
+  }
+  try {
+    authModule = await import('firebase-admin/auth');
+  } catch (error) {
+    throw firebaseAdminError(
+      'firebase-admin-auth-import-failed',
+      'No se pudo cargar firebase-admin/auth.',
+      error,
+    );
+  }
+  try {
+    firestoreModule = await import('firebase-admin/firestore');
+  } catch (error) {
+    throw firebaseAdminError(
+      'firebase-admin-firestore-import-failed',
+      'No se pudo cargar firebase-admin/firestore.',
       error,
     );
   }

@@ -142,6 +142,10 @@ export default async function handler(request, response) {
         && 'diagnosticCode' in error && typeof error.diagnosticCode === 'string'
         ? error.diagnosticCode
         : 'unknown',
+      causeCode: typeof error === 'object' && error !== null
+        && 'causeCode' in error && typeof error.causeCode === 'string'
+        ? error.causeCode
+        : 'unknown',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
     return response.status(503).json({
@@ -150,6 +154,10 @@ export default async function handler(request, response) {
       detailCode: typeof error === 'object' && error !== null
         && 'diagnosticCode' in error && typeof error.diagnosticCode === 'string'
         ? error.diagnosticCode
+        : 'unknown',
+      causeCode: typeof error === 'object' && error !== null
+        && 'causeCode' in error && typeof error.causeCode === 'string'
+        ? error.causeCode
         : 'unknown',
     });
   }

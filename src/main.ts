@@ -142,8 +142,16 @@ async function postVercelApi(
       const detailCode = isRecord(result) && typeof result.detailCode === 'string'
         ? result.detailCode
         : 'unavailable';
-      console.error('Cenit invite-user request failed', { status: response.status, code, detailCode });
-      throw new Error(`${message} (etapa: ${code}; detalle: ${detailCode})`);
+      const causeCode = isRecord(result) && typeof result.causeCode === 'string'
+        ? result.causeCode
+        : 'unavailable';
+      console.error('Cenit invite-user request failed', {
+        status: response.status,
+        code,
+        detailCode,
+        causeCode,
+      });
+      throw new Error(`${message} (etapa: ${code}; detalle: ${detailCode}; causa: ${causeCode})`);
     }
     throw new Error(message);
   }
