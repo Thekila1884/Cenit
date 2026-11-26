@@ -138,11 +138,19 @@ export default async function handler(request, response) {
         && typeof error.code === 'string'
         ? error.code
         : 'unknown',
+      diagnosticCode: typeof error === 'object' && error !== null
+        && 'diagnosticCode' in error && typeof error.diagnosticCode === 'string'
+        ? error.diagnosticCode
+        : 'unknown',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
     return response.status(503).json({
       error: 'No se pudo completar la invitación ahora.',
       code: failureStage,
+      detailCode: typeof error === 'object' && error !== null
+        && 'diagnosticCode' in error && typeof error.diagnosticCode === 'string'
+        ? error.diagnosticCode
+        : 'unknown',
     });
   }
 }

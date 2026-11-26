@@ -139,8 +139,11 @@ async function postVercelApi(
       : 'No se pudo completar la solicitud.';
     if (path === '/api/invite-user') {
       const code = isRecord(result) && typeof result.code === 'string' ? result.code : 'unavailable';
-      console.error('Cenit invite-user request failed', { status: response.status, code });
-      throw new Error(`${message} (etapa: ${code})`);
+      const detailCode = isRecord(result) && typeof result.detailCode === 'string'
+        ? result.detailCode
+        : 'unavailable';
+      console.error('Cenit invite-user request failed', { status: response.status, code, detailCode });
+      throw new Error(`${message} (etapa: ${code}; detalle: ${detailCode})`);
     }
     throw new Error(message);
   }
